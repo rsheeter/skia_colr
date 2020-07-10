@@ -24,6 +24,7 @@
 static DEFINE_string(font, "skia_test/samples-colr_1.ttf", "Font to load.");
 static DEFINE_string(text, "simple_linearsimple_radial", "Text to render in font.");
 static DEFINE_string(output, "colr_v1_glyph.png", "File to write.");
+static DEFINE_bool(show_bbox, false, "Whether to draw bbox markers.");
 
 const double kFontSizeScale = 64.0f;
 const float kFontSize = 128;
@@ -89,8 +90,8 @@ int main(int argc, char** argv) {
   hb_glyph_position_t *pos = hb_buffer_get_glyph_positions (hb_buffer, NULL);
   auto runBuffer = textBlobBuilder.allocRunPos(font, len);
 
-  double x = kMargin;
-  double y = kMargin;
+  double x = 0;
+  double y = 0;
   for (unsigned int i = 0; i < len; i++)
   {
     runBuffer.glyphs[i] = info[i].codepoint;
@@ -123,7 +124,12 @@ int main(int argc, char** argv) {
 
   SkPaint paint;
 
-  canvas->drawTextBlob(textBlob, 0, 0, paint);
+  if (FLAGS_show_bbox) {
+    canvas->drawLine(kMargin, kMargin, x - kMargin, kMargin, paint);
+    canvas->drawLine(kMargin, y - kMargin, x - kMargin, y - kMargin, paint);
+  }
+
+  canvas->drawTextBlob(textBlob, kMargin, y - kMargin, paint);
 
   sk_sp<SkImage> image = surface->makeImageSnapshot();
   sk_sp<SkData> png = image->encodeToData(SkEncodedImageFormat::kPNG, 100);
