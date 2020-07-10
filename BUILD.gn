@@ -2035,8 +2035,10 @@ if (skia_enable_tools) {
       "tools/colr_test/skia_test.cc"
     ]
     deps = [ 
+      ":flags",
       ":skia",
       "//third_party/freetype2",
+      "//third_party/harfbuzz",
     ]
   }
 
