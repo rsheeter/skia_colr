@@ -22,10 +22,10 @@
 #include <string>
 
 static DEFINE_string(font, "skia_test/samples-colr_1.ttf", "Font to load.");
-static DEFINE_string(text, "simple_linear", "Text to render in font.");
+static DEFINE_string(text, "simple_linearsimple_radial", "Text to render in font.");
 static DEFINE_string(output, "colr_v1_glyph.png", "File to write.");
 
-const double FONT_SIZE_SCALE = 64.0f;
+const double kFontSizeScale = 64.0f;
 const float kFontSize = 128;
 const float kMargin = 32;
 
@@ -64,7 +64,12 @@ int main(int argc, char** argv) {
   // We'll need an hb face & font to shape
   hb_face_t* hb_face = hb_face_create(hb_font_blob, /* index */ 0);
   hb_blob_destroy(hb_font_blob);
+
   hb_font_t *hb_font = hb_font_create(hb_face);
+    hb_font_set_scale(hb_font,
+        kFontSizeScale * kFontSize,
+        kFontSizeScale * kFontSize);
+    hb_ot_font_set_funcs(hb_font);
 
   // Let's all agree on upem
   hb_face_set_upem(hb_face, face->getUnitsPerEm());
@@ -91,14 +96,19 @@ int main(int argc, char** argv) {
     runBuffer.glyphs[i] = info[i].codepoint;
     printf("gid %d (%.01f %.01f)\n", info[i].codepoint, x, y);
     reinterpret_cast<SkPoint*>(runBuffer.pos)[i] = SkPoint::Make(
-      x + pos[i].x_offset / FONT_SIZE_SCALE,
-      y - pos[i].y_offset / FONT_SIZE_SCALE);
+      x + pos[i].x_offset / kFontSizeScale,
+      y - pos[i].y_offset / kFontSizeScale);
 
-    x += pos[i].x_advance / FONT_SIZE_SCALE;
-    y += pos[i].y_advance / FONT_SIZE_SCALE;
+    x += pos[i].x_advance / kFontSizeScale;
+    y += pos[i].y_advance / kFontSizeScale;
   }
-  x += kMargin;
-  y += kMargin;
+
+  auto textBlob = textBlobBuilder.make();
+
+  // How much space y'all need?
+  auto bbox = textBlob->bounds();
+  x = 2 * kMargin + bbox.width();
+  y = 2 * kMargin + bbox.height();
 
   // Let's paint something!
   printf("Making %.1f x %.1f canvas\n", x, y);
@@ -113,15 +123,7 @@ int main(int argc, char** argv) {
 
   SkPaint paint;
 
-  // Example suggest we should set text encoding but .. no such api?
-
-  canvas->drawTextBlob(textBlobBuilder.make(), 0, 0, paint);
-  /*
-  for (size_t i = 0; i < sizeof(kTestGlyphIds) / sizeof(uint16_t); ++i) {
-    canvas->drawSimpleText(&kTestGlyphIds[i], 2, SkTextEncoding::kGlyphID,
-                           10 + kFontSize * (i), kFontSize + 10, font, paint);
-  }
-  */
+  canvas->drawTextBlob(textBlob, 0, 0, paint);
 
   sk_sp<SkImage> image = surface->makeImageSnapshot();
   sk_sp<SkData> png = image->encodeToData(SkEncodedImageFormat::kPNG, 100);
