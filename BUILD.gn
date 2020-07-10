@@ -1820,6 +1820,16 @@ if (skia_enable_tools) {
     deps = [ ":skia" ]
   }
 
+  test_app("colr_test") {
+    sources = [ 
+      "tools/colr_test/skia_test.cc"
+    ]
+    deps = [ 
+      ":skia",
+      "//third_party/freetype2",
+    ]
+  }
+
   import("gn/samples.gni")
   test_lib("samples") {
     sources = samples_sources
