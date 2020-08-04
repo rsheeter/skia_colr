@@ -25,10 +25,12 @@ static DEFINE_string(font, "skia_test/samples-colr_1.ttf", "Font to load.");
 static DEFINE_string(text, "simple_linearsimple_radial", "Text to render in font.");
 static DEFINE_string(output, "colr_v1_glyph.png", "File to write.");
 static DEFINE_bool(show_bbox, false, "Whether to draw bbox markers.");
+static DEFINE_int(margin, 0, "Margin.");
+static DEFINE_int(height, -1, "Canvas height. If -1, autosize to fit.");
+static DEFINE_int(width, -1, "Canvas height. If -1, autosize to fit.");
 
 const double kFontSizeScale = 64.0f;
 const float kFontSize = 128;
-const float kMargin = 32;
 
 int main(int argc, char** argv) {
   CommandLineFlags::Parse(argc, argv);
@@ -107,9 +109,10 @@ int main(int argc, char** argv) {
   auto textBlob = textBlobBuilder.make();
 
   // How much space y'all need?
+  auto margin = FLAGS_margin;
   auto bbox = textBlob->bounds();
-  x = 2 * kMargin + bbox.width();
-  y = 2 * kMargin + bbox.height();
+  x = 2 * margin + (FLAGS_width > -1 ? FLAGS_width : bbox.width());
+  y = 2 * margin + (FLAGS_height > -1 ? FLAGS_height : bbox.height());
 
   // Let's paint something!
   printf("Making %.1f x %.1f canvas\n", x, y);
@@ -120,16 +123,16 @@ int main(int argc, char** argv) {
   if (!surface)
     return 1;
   SkCanvas* canvas = surface->getCanvas();
-  canvas->clear(SK_ColorWHITE);
+  canvas->clear(SK_ColorTRANSPARENT);
 
   SkPaint paint;
 
   if (FLAGS_show_bbox) {
-    canvas->drawLine(kMargin, kMargin, x - kMargin, kMargin, paint);
-    canvas->drawLine(kMargin, y - kMargin, x - kMargin, y - kMargin, paint);
+    canvas->drawLine(margin, margin, x - margin, margin, paint);
+    canvas->drawLine(margin, y - margin, x - margin, y - margin, paint);
   }
 
-  canvas->drawTextBlob(textBlob, kMargin, y - kMargin, paint);
+  canvas->drawTextBlob(textBlob, margin, y - margin, paint);
 
   sk_sp<SkImage> image = surface->makeImageSnapshot();
   sk_sp<SkData> png = image->encodeToData(SkEncodedImageFormat::kPNG, 100);
