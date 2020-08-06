@@ -368,7 +368,7 @@ inline SkColorType SkColorType_for_SkMaskFormat(SkMask::Format format) {
     }
 }
 
-inline float SkColrV1AlphaToFloat(uint16_t alpha) { return 1 - (alpha / float(1 << 14)); }
+inline float SkColrV1AlphaToFloat(uint16_t alpha) { return (alpha / float(1 << 14)); }
 
 }  // namespace
 
@@ -434,26 +434,6 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(
                 FT_UInt layerGlyphIndex;
                 FT_COLR_Paint layerPaint;
 
-                // FT_UInt layerColorIndex;
-                // while (FT_Get_Color_Glyph_Layer(face, glyph.getGlyphID(), &layerGlyphIndex,
-                //                                 &layerColorIndex,
-                //                                 &layerIterator)) {
-                //     haveLayers = true;
-                //     if (layerColorIndex == 0xFFFF) {
-                //         paint.setColor(SK_ColorBLACK);
-                //     } else {
-                //         SkColor color = SkColorSetARGB(palette[layerColorIndex].alpha,
-                //                                        palette[layerColorIndex].red,
-                //                                        palette[layerColorIndex].green,
-                //                                        palette[layerColorIndex].blue);
-                //         paint.setColor(color);
-                //     }
-                //     SkPath path;
-                //     if (this->generateFacePath(face, layerGlyphIndex, &path)) {
-                //         canvas.drawPath(path, paint);
-                //     }
-                // }
-
                 SkScalar upem = SkIntToScalar(SkTypeface_FreeType::GetUnitsPerEm(face));
 
                 while (FT_Get_Color_Glyph_Layer_Gradients(
@@ -503,7 +483,8 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(
                             FT_UInt16& palette_index = color_stop.color.palette_index;
                             /* TODO: extra alpha from font table */
                             colors[index] = SkColorSetARGB(
-                                    palette[palette_index].alpha * SkColrV1AlphaToFloat(color_stop.color.alpha),
+                                    palette[palette_index].alpha *
+                                            SkColrV1AlphaToFloat(color_stop.color.alpha),
                                     palette[palette_index].red, palette[palette_index].green,
                                     palette[palette_index].blue);
                         }
@@ -516,6 +497,7 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(
                                line_positions[1].y(), colors[0], colors[1], stops[0], stops[1],
                                num_color_stops);
 
+                        // // Debug paint the gradient start and stop points.
                         // paint.setColor(SK_ColorBLACK);
                         // paint.setShader(nullptr);
                         // canvas.drawRect(SkRect::MakeXYWH(line_positions[0].x() - 1.5, line_positions[0].y() - 1.5, 3, 3),
@@ -523,15 +505,15 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(
                         // paint.setColor(SK_ColorRED);;
                         // canvas.drawRect(SkRect::MakeXYWH(line_positions[1].x() - 1.5, line_positions[1].y() - 1.5, 3, 3),
                         //                 paint);
-                        // printf("Glyph info: width %hu height %hu fLeft %d fTop %d\n", glyph.fWidth,
-                        //        glyph.fHeight, glyph.fLeft, glyph.fTop);
+                        printf("Glyph info: width %hu height %hu fLeft %d fTop %d\n", glyph.fWidth,
+                               glyph.fHeight, glyph.fLeft, glyph.fTop);
 
-                        paint.setShader(SkGradientShader::MakeLinear(line_positions, colors, stops,
-                                                                     num_color_stops,
-                                                                     SkTileMode::kClamp));
+                        sk_sp<SkShader> shader(SkGradientShader::MakeLinear(line_positions, colors,
+                                                                            stops, num_color_stops,
+                                                                            SkTileMode::kClamp));
 
-                        // canvas.drawPaint(paint);
-
+                        SkASSERT(shader);
+                        paint.setShader(shader);
                         break;
                       }
                       case COLR_PAINTFORMAT_RADIAL_GRADIENT: {
@@ -593,7 +575,30 @@ void SkScalerContext_FreeType_Base::generateGlyphImage(
                 }
 
                 if (!haveLayers) {
-                    SK_TRACEFTR(err, "Could not get layers from %s fontFace.", face->family_name);
+                    printf("Font did not have COLR v1 layers, attempting COLR v0 layers.\n");
+                    // If we didn't have colr v1 layers, try v0 layers.
+                    FT_UInt layerColorIndex;
+                    while (FT_Get_Color_Glyph_Layer(face, glyph.getGlyphID(), &layerGlyphIndex,
+                                                    &layerColorIndex, &layerIterator)) {
+                        haveLayers = true;
+                        if (layerColorIndex == 0xFFFF) {
+                            paint.setColor(SK_ColorBLACK);
+                        } else {
+                            SkColor color = SkColorSetARGB(palette[layerColorIndex].alpha,
+                                                           palette[layerColorIndex].red,
+                                                           palette[layerColorIndex].green,
+                                                           palette[layerColorIndex].blue);
+                            paint.setColor(color);
+                        }
+                        SkPath path;
+                        if (this->generateFacePath(face, layerGlyphIndex, &path)) {
+                            canvas.drawPath(path, paint);
+                        }
+                    }
+                }
+
+                if (!haveLayers) {
+                    SK_TRACEFTR(err, "Could not get layers (neither v0, nor v1) from %s fontFace.", face->family_name);
                     return;
                 }
             } else
