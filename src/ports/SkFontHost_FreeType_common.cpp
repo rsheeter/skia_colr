@@ -379,7 +379,6 @@ inline SkColorType SkColorType_for_SkMaskFormat(SkMask::Format format) {
     }
 }
 
-<<<<<<< HEAD
 // Only build COLRv1 rendering code if FreeType is new enough to have COLRv1
 // additions. FreeType defines a macro in the ftoption header to tell us whether
 // it does support these features.
@@ -1168,9 +1167,6 @@ bool colrv1_start_glyph_bounds(SkMatrix *ctm,
     return has_colrv1_layers;
 }
 #endif // TT_SUPPORT_COLRV1
-=======
-inline float SkColrV1AlphaToFloat(uint16_t alpha) { return 1 - (alpha / float(1 << 14)); }
->>>>>>> 7b86c529dc (WIP: color v1 paint)
 
 }  // namespace
 
