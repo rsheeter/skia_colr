@@ -1220,9 +1220,8 @@ void SkScalerContext_FreeType::generateMetrics(SkGlyph* glyph) {
         }
 
         FT_COLR_Paint layerPaint;
-        while (FT_Get_Color_Glyph_Layer_Gradients(fFace, glyph->getGlyphID(),
-                                        &layerGlyphIndex, &layerPaint, &layerIterator))
-        {
+        while (FT_Get_Color_Glyph_Layer_Gradients(fFace, glyph->getGlyphID(), &layerGlyphIndex,
+                                                  &layerPaint, &layerIterator)) {
             // TODO: Avoid this code duplication for v1 bbox extension.
             haveLayers = true;
             err = FT_Load_Glyph(fFace, layerGlyphIndex,

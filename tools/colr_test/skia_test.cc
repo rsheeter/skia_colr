@@ -31,6 +31,7 @@ static DEFINE_int(width, -1, "Canvas height. If -1, autosize to fit.");
 
 const double kFontSizeScale = 64.0f;
 const float kFontSize = 128;
+const float kDefaultFontSize = 128;
 
 int main(int argc, char** argv) {
   CommandLineFlags::Parse(argc, argv);
@@ -51,7 +52,11 @@ int main(int argc, char** argv) {
 
 
   SkFont font(face);
-  font.setSize(kFontSize);
+  if (FLAGS_height == -1) {
+    font.setSize(kDefaultFontSize);
+  } else {
+    font.setSize(FLAGS_height);
+  }
 
   // get a blob of our font file
   auto destroy = [](void *d) { static_cast<SkData*>(d)->unref(); };
@@ -69,13 +74,14 @@ int main(int argc, char** argv) {
   hb_blob_destroy(hb_font_blob);
 
   hb_font_t *hb_font = hb_font_create(hb_face);
-    hb_font_set_scale(hb_font,
+  /*hb_font_set_scale(hb_font,
         kFontSizeScale * kFontSize,
-        kFontSizeScale * kFontSize);
-    hb_ot_font_set_funcs(hb_font);
+        kFontSizeScale * kFontSize);*/
+  hb_ot_font_set_funcs(hb_font);
 
   // Let's all agree on upem
   hb_face_set_upem(hb_face, face->getUnitsPerEm());
+  printf("upem %d\n", face->getUnitsPerEm());
 
   // Oh wise and powerful HarfBuzz, what glyphs and where?
   hb_buffer_t *hb_buffer = hb_buffer_create ();
