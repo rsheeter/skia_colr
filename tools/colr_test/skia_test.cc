@@ -117,8 +117,8 @@ int main(int argc, char** argv) {
   // Let's paint something!
   printf("Making %.1f x %.1f canvas\n", x, y);
   SkImageInfo image_info =
-      SkImageInfo::Make(x, y, SkColorType::kRGB_565_SkColorType,
-                        SkAlphaType::kOpaque_SkAlphaType);
+      SkImageInfo::Make(x, y, SkColorType::kRGBA_8888_SkColorType,
+                        SkAlphaType::kPremul_SkAlphaType);
   sk_sp<SkSurface> surface(SkSurface::MakeRaster(image_info));
   if (!surface)
     return 1;
