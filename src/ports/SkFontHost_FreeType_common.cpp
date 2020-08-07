@@ -1170,12 +1170,10 @@ bool colrv1_start_glyph_bounds(SkMatrix *ctm,
 
 }  // namespace
 
-void SkScalerContext_FreeType_Base::generateGlyphImage(
-    FT_Face face,
-    const SkGlyph& glyph,
-    const SkMatrix& bitmapTransform,
-    const SkVector& scale)
-{
+void SkScalerContext_FreeType_Base::generateGlyphImage(FT_Face face,
+                                                       const SkGlyph& glyph,
+                                                       const SkMatrix& bitmapTransform,
+                                                       const SkVector& scale) {
     const bool doBGR = SkToBool(fRec.fFlags & SkScalerContext::kLCD_BGROrder_Flag);
     const bool doVert = SkToBool(fRec.fFlags & SkScalerContext::kLCD_Vertical_Flag);
 
