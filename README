@@ -6,3 +6,9 @@ This repo is meant to house COLR test utils. To try on a Mac:
 
   ./build_mac_colr.sh
   ./out/Static/colr_test
+
+Changes made locally plus drawn from:
+
+  https://chromium-review.googlesource.com/c/chromium/src/+/2282815
+  https://skia-review.googlesource.com/c/skia/+/300558
+  https://github.com/drott/freetype2-colr colrV1API branch
