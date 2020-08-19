@@ -2,9 +2,9 @@ Skia is a complete 2D graphic library for drawing Text, Geometries, and Images.
 
 See full details, and build instructions, at https://skia.org.
 
-This repo is meant to house COLR test utils. To try on a Mac:
+This repo is meant to house COLR test utils. To try on Mac or Linux:
 
-  ./build_mac_colr.sh
+  ./build_colr.sh
   ./out/Static/colr_test
 
 Changes made locally plus drawn from:
