@@ -2026,6 +2026,18 @@ if (skia_enable_tools) {
     deps = [ ":skia" ]
   }
 
+  test_app("colr_test") {
+    sources = [ 
+      "tools/colr_test/skia_test.cc"
+    ]
+    deps = [ 
+      ":flags",
+      ":skia",
+      "//third_party/freetype2",
+      "//third_party/harfbuzz",
+    ]
+  }
+
   import("gn/samples.gni")
   test_lib("samples") {
     sources = samples_sources
