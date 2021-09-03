@@ -10,7 +10,7 @@ function fetch_drott_colr() {
 
 [ -e ./bin/gn ] || ./bin/fetch-gn
 [ -d third_party/externals ] || ./tools/git-sync-deps
-[ "colr_v1_dag" == "$(cd third_party/externals/freetype && git rev-parse --abbrev-ref HEAD)" ] || fetch_drott_colr
+# [ "colr_v1_dag" == "$(cd third_party/externals/freetype && git rev-parse --abbrev-ref HEAD)" ] || fetch_drott_colr
 [ -d out/Static ] || mkdir -p out/Static
 
 set -e
