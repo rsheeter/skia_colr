@@ -53,9 +53,11 @@ int main(int argc, char** argv) {
 
   SkFont font(face);
   if (FLAGS_height == -1) {
-    font.setSize(kDefaultFontSize);
+      font.setSize(kDefaultFontSize);
   } else {
-    font.setSize(FLAGS_height * 0.75);
+      // IIUC, the view box of the SVG is scaled to ascender plus descender, but
+      // the font size is scaling the 1024 em box. Correct for that.
+      font.setSize(FLAGS_height * 1024.f / (950 + 250));
   }
 
   // get a blob of our font file
@@ -141,7 +143,13 @@ int main(int argc, char** argv) {
     canvas->drawLine(margin, y - margin, x - margin, y - margin, paint);
   }
 
-  canvas->drawTextBlob(textBlob, margin, y - metrics.fDescent + margin, paint);
+  // The view box of the SVG is scaled to ascender plus descender and centerd
+  // within the advance width.  Ascender is 950, descender 250, advance width is
+  // 1295. So it's 1200 centered in 1295.  Reverse this centering here.
+  canvas->drawTextBlob(textBlob,
+                       margin - (FLAGS_height * (1295 - (950 + 250)) / 1295 / 2),
+                       y - metrics.fDescent + margin,
+                       paint);
 
   sk_sp<SkImage> image = surface->makeImageSnapshot();
   sk_sp<SkData> png = image->encodeToData(SkEncodedImageFormat::kPNG, 100);
