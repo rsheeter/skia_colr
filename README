@@ -7,7 +7,8 @@ This repo is meant to house COLR test utils. To try on Mac or Linux:
   ./build_colr.sh
   ./out/Static/colr_test
 
-Changes made locally plus drawn from:
+This was originally based on the following work in progress branches but
+is now based on upstream FreeType and Skia.
 
   https://chromium-review.googlesource.com/c/chromium/src/+/2282815
   https://skia-review.googlesource.com/c/skia/+/300558

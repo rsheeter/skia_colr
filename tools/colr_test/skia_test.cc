@@ -55,7 +55,7 @@ int main(int argc, char** argv) {
   if (FLAGS_height == -1) {
     font.setSize(kDefaultFontSize);
   } else {
-    font.setSize(FLAGS_height);
+    font.setSize(FLAGS_height * 0.75);
   }
 
   // get a blob of our font file
@@ -133,12 +133,15 @@ int main(int argc, char** argv) {
 
   SkPaint paint;
 
+  SkFontMetrics metrics;
+  font.getMetrics(&metrics);
+
   if (FLAGS_show_bbox) {
     canvas->drawLine(margin, margin, x - margin, margin, paint);
     canvas->drawLine(margin, y - margin, x - margin, y - margin, paint);
   }
 
-  canvas->drawTextBlob(textBlob, margin, y - margin, paint);
+  canvas->drawTextBlob(textBlob, margin, y - metrics.fDescent + margin, paint);
 
   sk_sp<SkImage> image = surface->makeImageSnapshot();
   sk_sp<SkData> png = image->encodeToData(SkEncodedImageFormat::kPNG, 100);
