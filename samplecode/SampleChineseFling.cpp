@@ -18,7 +18,7 @@
 
 #if SK_SUPPORT_GPU
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #endif
 
 static sk_sp<SkTypeface> chinese_typeface() {
@@ -142,19 +142,23 @@ class ChineseZoomView : public Sample {
                 sk_sp<SkImage> image = direct->priv().testingOnly_getFontAtlasImage(
                             GrMaskFormat::kA8_GrMaskFormat, 0);
                 canvas->drawImageRect(image,
-                                      SkRect::MakeXYWH(10.0f, 10.0f, 512.0f, 512.0), &paint);
+                                      SkRect::MakeXYWH(10.0f, 10.0f, 512.0f, 512.0),
+                                      SkSamplingOptions(), &paint);
                 image = direct->priv().testingOnly_getFontAtlasImage(
                         GrMaskFormat::kA8_GrMaskFormat, 1);
                 canvas->drawImageRect(image,
-                                      SkRect::MakeXYWH(522.0f, 10.0f, 512.f, 512.0f), &paint);
+                                      SkRect::MakeXYWH(522.0f, 10.0f, 512.f, 512.0f),
+                                      SkSamplingOptions(), &paint);
                 image = direct->priv().testingOnly_getFontAtlasImage(
                         GrMaskFormat::kA8_GrMaskFormat, 2);
                 canvas->drawImageRect(image,
-                                      SkRect::MakeXYWH(10.0f, 522.0f, 512.0f, 512.0f), &paint);
+                                      SkRect::MakeXYWH(10.0f, 522.0f, 512.0f, 512.0f),
+                                      SkSamplingOptions(), &paint);
                 image = direct->priv().testingOnly_getFontAtlasImage(
                         GrMaskFormat::kA8_GrMaskFormat, 3);
                 canvas->drawImageRect(image,
-                                      SkRect::MakeXYWH(522.0f, 522.0f, 512.0f, 512.0f), &paint);
+                                      SkRect::MakeXYWH(522.0f, 522.0f, 512.0f, 512.0f),
+                                      SkSamplingOptions(), &paint);
             }
 #endif
         }

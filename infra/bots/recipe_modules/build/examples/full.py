@@ -38,17 +38,18 @@ TEST_BUILDERS = [
   'Build-Debian9-Clang-x86_64-Release-Chromebook_GLES_Docker',
   'Build-Debian10-Clang-arm-Release-Flutter_Android',
   'Build-Debian10-Clang-arm64-Release-Android_Wuffs',
-  'Build-Debian10-Clang-x86-devrel-Android_SKQP',
   'Build-Debian10-Clang-x86_64-Debug-Chromebook_GLES',
   'Build-Debian10-Clang-x86_64-Debug-Coverage',
   'Build-Debian10-Clang-x86_64-Debug-MSAN',
   'Build-Debian10-Clang-x86_64-Debug-TSAN',
-  'Build-Debian10-Clang-x86_64-Debug-OpenCL',
   'Build-Debian10-Clang-x86_64-Debug-SK_CPU_LIMIT_SSE41',
   'Build-Debian10-Clang-x86_64-Debug-SafeStack',
   'Build-Debian10-Clang-x86_64-Debug-SwiftShader_MSAN',
   'Build-Debian10-Clang-x86_64-Debug-SwiftShader_TSAN',
   'Build-Debian10-Clang-x86_64-Debug-Tidy',
+  "Build-Debian10-Clang-x86_64-Debug-V1only",
+  "Build-Debian10-Clang-x86_64-Debug-V1andV2",
+  "Build-Debian10-Clang-x86_64-Debug-V2only",
   'Build-Debian10-Clang-x86_64-Debug-Wuffs',
   'Build-Debian10-Clang-x86_64-Release-ANGLE',
   'Build-Debian10-Clang-x86_64-Release-ASAN',
@@ -64,22 +65,19 @@ TEST_BUILDERS = [
   'Build-Debian10-EMCC-wasm-Debug-PathKit',
   'Build-Debian10-EMCC-wasm-Release-CanvasKit_CPU',
   'Build-Debian10-EMCC-wasm-Release-PathKit',
-  "Build-Mac10.15.5-Clang-arm64-Debug-iOS",
-  'Build-Mac-Clang-arm-Debug-iOS',
   'Build-Mac-Clang-arm64-Debug-Android_Vulkan',
   'Build-Mac-Clang-arm64-Debug-iOS',
+  'Build-Mac-Xcode11.4.1-arm64-Debug-iOS',
   'Build-Mac-Clang-x86_64-Debug-ASAN',
   'Build-Mac-Clang-x86_64-Debug-CommandBuffer',
   'Build-Mac-Clang-x86_64-Debug-Metal',
   'Build-Win-Clang-arm64-Release-Android',
   'Build-Win-Clang-x86-Debug-Exceptions',
   'Build-Win-Clang-x86_64-Debug-ANGLE',
-  'Build-Win-Clang-x86_64-Debug-OpenCL',
   'Build-Win-Clang-x86_64-Release-Direct3D',
   'Build-Win-Clang-x86_64-Release-Shared',
   "Build-Win-Clang-x86_64-Release-Dawn",
   'Build-Win-Clang-x86_64-Release-Vulkan',
-  'Test-Debian10-Clang-GCE-CPU-AVX2-universal-devrel-All-Android_SKQP',
   'Housekeeper-PerCommit-CheckGeneratedFiles',
 ]
 
@@ -99,7 +97,7 @@ def GenTests(api):
       api.test(buildername) +
       api.properties(**defaultProps(buildername))
     )
-    if 'Win' in buildername and not 'LenovoYogaC630' in buildername:
+    if 'Win' in buildername:
       test += api.platform('win', 64)
     yield test
 

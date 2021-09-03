@@ -9,7 +9,11 @@
 #define ManagedBackendTexture_DEFINED
 
 #include "include/core/SkRefCnt.h"
+#include "include/core/SkYUVAInfo.h"
 #include "include/gpu/GrDirectContext.h"
+
+class GrRefCntedCallback;
+struct SkImageInfo;
 
 namespace sk_gpu_test {
 
@@ -34,6 +38,25 @@ public:
     template <typename... Args>
     static sk_sp<ManagedBackendTexture> MakeWithoutData(GrDirectContext*, Args&&...);
 
+
+    static sk_sp<ManagedBackendTexture> MakeFromInfo(GrDirectContext* dContext,
+                                                     const SkImageInfo&,
+                                                     GrMipmapped = GrMipmapped::kNo,
+                                                     GrRenderable = GrRenderable::kNo,
+                                                     GrProtected = GrProtected::kNo);
+
+    static sk_sp<ManagedBackendTexture> MakeFromBitmap(GrDirectContext*,
+                                                       const SkBitmap&,
+                                                       GrMipmapped,
+                                                       GrRenderable,
+                                                       GrProtected = GrProtected::kNo);
+
+    static sk_sp<ManagedBackendTexture> MakeFromPixmap(GrDirectContext*,
+                                                       const SkPixmap&,
+                                                       GrMipmapped,
+                                                       GrRenderable,
+                                                       GrProtected = GrProtected::kNo);
+
     /** GrGpuFinishedProc or image/surface release proc. */
     static void ReleaseProc(void* context);
 
@@ -41,9 +64,26 @@ public:
 
     /**
      * The context to use with ReleaseProc. This adds a ref so it *must* be balanced by a call to
-     * ReleaseProc.
+     * ReleaseProc. If a wrappedProc is provided then it will be called by ReleaseProc.
      */
-    void* releaseContext();
+    void* releaseContext(GrGpuFinishedProc wrappedProc = nullptr,
+                         GrGpuFinishedContext wrappedContext = nullptr) const;
+
+    sk_sp<GrRefCntedCallback> refCountedCallback() const;
+
+    /**
+     * Call if the underlying GrBackendTexture was adopted by a GrContext. This clears this out the
+     * MBET without deleting the texture.
+     */
+    void wasAdopted();
+
+    /**
+     * SkImage::MakeFromYUVATextures takes a single release proc that is called once for all the
+     * textures. This makes a single release context for the group of textures. It's used with the
+     * standard ReleaseProc. Like releaseContext(), it must be balanced by a ReleaseProc call for
+     * proper ref counting.
+     */
+    static void* MakeYUVAReleaseContext(const sk_sp<ManagedBackendTexture>[SkYUVAInfo::kMaxPlanes]);
 
     const GrBackendTexture& texture() { return fTexture; }
 
@@ -52,7 +92,7 @@ private:
     ManagedBackendTexture(const ManagedBackendTexture&) = delete;
     ManagedBackendTexture(ManagedBackendTexture&&) = delete;
 
-    GrDirectContext* fDContext = nullptr;
+    sk_sp<GrDirectContext> fDContext;
     GrBackendTexture fTexture;
 };
 
@@ -60,10 +100,13 @@ template <typename... Args>
 inline sk_sp<ManagedBackendTexture> ManagedBackendTexture::MakeWithData(GrDirectContext* dContext,
                                                                         Args&&... args) {
     sk_sp<ManagedBackendTexture> mbet(new ManagedBackendTexture);
-    mbet->fDContext = dContext;
+    mbet->fDContext = sk_ref_sp(dContext);
     mbet->fTexture = dContext->createBackendTexture(std::forward<Args>(args)...,
                                                     ReleaseProc,
                                                     mbet->releaseContext());
+    if (!mbet->fTexture.isValid()) {
+        return nullptr;
+    }
     return mbet;
 }
 
@@ -71,9 +114,14 @@ template <typename... Args>
 inline sk_sp<ManagedBackendTexture> ManagedBackendTexture::MakeWithoutData(
         GrDirectContext* dContext,
         Args&&... args) {
+    GrBackendTexture texture =
+            dContext->createBackendTexture(std::forward<Args>(args)...);
+    if (!texture.isValid()) {
+        return nullptr;
+    }
     sk_sp<ManagedBackendTexture> mbet(new ManagedBackendTexture);
-    mbet->fDContext = dContext;
-    mbet->fTexture = dContext->createBackendTexture(std::forward<Args>(args)...);
+    mbet->fDContext = sk_ref_sp(dContext);
+    mbet->fTexture = std::move(texture);
     return mbet;
 }
 

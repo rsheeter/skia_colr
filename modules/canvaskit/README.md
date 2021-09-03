@@ -1,10 +1,26 @@
 # Prerequisites
 
+Node v14 or later is required to run tests. We use npm (the Node Package Manager) to install
+test dependencies. Recent installations of Node have npm as well.
+CanvasKit has no other external source dependencies.
+
 To compile CanvasKit, you will first need to [install `emscripten`][1].  This
 will set the environment `EMSDK` (among others) which is required for
-compilation.
+compilation. Which version should you use?  [`/infra/wasm-common/docker/emsdk-base/Dockerfile`][2]
+shows the version we build and test with. We try to use as recent a version of emscripten as
+is reasonable.
 
 [1]: https://emscripten.org/docs/getting_started/downloads.html
+[2]: https://github.com/google/skia/blob/master/infra/wasm-common/docker/emsdk-base/Dockerfile
+
+Be sure to both install **and** activate the correct version. For example:
+```
+    ./emsdk install 2.0.20
+    ./emsdk activate 2.0.20
+```
+
+This document also assumes you have followed the instructions to download Skia and its deps
+<https://skia.org/user/download>.
 
 ## MacOS specific notes
 Make sure you have Python3 installed, otherwise the downloading emscripten toolchain
@@ -16,13 +32,17 @@ for a solution to Python3 using the wrong certificates.
 # Compile and Run Local Example
 
 ```
+# The following installs all npm dependencies and only needs to be when setting up
+# or if our npm dependencies have changed (rarely).
+npm ci
+
 make release  # make debug is much faster and has better error messages
 make local-example
 ```
 
 This will print a local endpoint for viewing the example.  You can experiment
-with the CanvasKit API by modifying `./canvaskit/example.html` and refreshing
-the page. For some more experimental APIs, there's also `./canvaskit/extra.html`.
+with the CanvasKit API by modifying `./npm_build/example.html` and refreshing
+the page. For some more experimental APIs, there's also `./npm_build/extra.html`.
 
 For other available build targets, see `Makefile` and `compile.sh`.
 For example, building a stripped-down version of CanvasKit with no text support or
@@ -59,22 +79,12 @@ the results will only be useful when testing a debug build. Open
 
 ## Measuring Performance
 
-To measure the runtime of all benchmarks in `perf/`
-
-```
-make release
-make perf
-```
-
-Performacnce benchmarks also use karma, with a different config `karma.bench.conf.js`.
-It will run once and print results.
-
-Typically, you'd want to run these at head, and with your CL to observe the effect of some
-optimization.
+We use puppeteer to run a Chrome browser to gather performance data in a consistent way.
+See //tools/perf-canvaskit-puppeteer for more.
 
 ## Adding tests
 
-The tests in `tests/` and `perf/` are grouped into files by topic.
+The tests in `tests/` are grouped into files by topic.
 Within each file there are `describe` blocks further organizing the tests, and within those
 `it()` functions which test particular behaviors. `describe` and `it` are jasmine methods
 which can both be temporarily renamed `fdescribe` and `fit`. Which causes jasmine to only those.
@@ -133,10 +143,12 @@ sdk and verified/fixed any build issues that have arisen.
   7. In `$SKIA_ROOT/infra/bots/recipe_modules/build/`, update `canvaskit.py`
      and `pathkit.py` to have `DOCKER_IMAGE` point to the desired tagged Docker
      containers from steps 2 and 5 (which should be the same).
+  8. In `$SKIA_ROOT/infra/bots/task_drivers/compile_wasm_gm_tests.go`, update dockerImage
+     to refer to the desired Docker containers from steps 2 and 5.
   9. In `$SKIA_ROOT/infra/bots/`, run `make train` to re-train the recipes.
   10. Optional: Run something like `git grep 1\\.38\\.` in `$SKIA_ROOT` to see if
      there are any other references that need updating.
-  11. Upload a CL with all the changes. Run all Test.+CanvasKit, Perf.+CanvasKit,
+  11. Upload a CL with all the changes. Run all Test.+CanvasKit, Perf.+Puppeteer,
       Test.+PathKit, Perf.+PathKit jobs to make sure the new builds pass all
       tests and don't crash the perf harnesses.
   12. Send out CL for review. Feel free to point the reviewer at these steps.

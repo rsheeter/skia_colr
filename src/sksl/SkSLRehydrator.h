@@ -8,10 +8,10 @@
 #ifndef SKSL_REHYDRATOR
 #define SKSL_REHYDRATOR
 
-#include "src/sksl/SkSLDefines.h"
-
-#include "src/sksl/ir/SkSLModifiers.h"
-#include "src/sksl/ir/SkSLSymbol.h"
+#include "include/private/SkSLDefines.h"
+#include "include/private/SkSLModifiers.h"
+#include "include/private/SkSLSymbol.h"
+#include "src/sksl/SkSLContext.h"
 
 #include <vector>
 
@@ -50,20 +50,26 @@ public:
         kBreak_Command,
         // int16 builtin
         kBuiltinLayout_Command,
-        // Type type, uint8 argCount, Expression[] arguments
-        kConstructor_Command,
+        // (All constructors) Type type, uint8 argCount, Expression[] arguments
+        kConstructorArray_Command,
+        kConstructorArrayCast_Command,
+        kConstructorCompound_Command,
+        kConstructorCompoundCast_Command,
+        kConstructorDiagonalMatrix_Command,
+        kConstructorMatrixResize_Command,
+        kConstructorScalarCast_Command,
+        kConstructorSplat_Command,
+        kConstructorStruct_Command,
         kContinue_Command,
         kDefaultLayout_Command,
         kDefaultModifiers_Command,
         kDiscard_Command,
         // Statement stmt, Expression test
         kDo_Command,
-        // uint8 count, uint8 index
+        // ProgramElement[] elements (reads until command `kElementsComplete_Command` is found)
         kElements_Command,
-        // String typeName, SymbolTable symbols, int32[] values
-        kEnum_Command,
-        // uint16 id, String name
-        kEnumType_Command,
+        // no arguments--indicates end of Elements list
+        kElementsComplete_Command,
         // Expression expression
         kExpressionStatement_Command,
         // uint16 ownerId, uint8 index
@@ -77,7 +83,7 @@ public:
         kFor_Command,
         // Type type, uint16 function, uint8 argCount, Expression[] arguments
         kFunctionCall_Command,
-        // uint16 declaration, Statement body, uint8 refCount, uint16[] referencedIntrinsics
+        // uint16 declaration, Statement body, uint8 refCount
         kFunctionDefinition_Command,
         // uint16 id, Modifiers modifiers, String name, uint8 parameterCount, uint16[] parameterIds,
         // Type returnType
@@ -93,16 +99,12 @@ public:
         // int32 value
         kIntLiteral_Command,
         // int32 flags, int8 location, int8 offset, int8 binding, int8 index, int8 set,
-        // int16 builtin, int8 inputAttachmentIndex, int8 format, int8 primitive, int8 maxVertices,
-        // int8 invocations, String marker, String when, int8 key, int8 ctype
+        // int16 builtin, int8 inputAttachmentIndex
         kLayout_Command,
         // Layout layout, uint8 flags
         kModifiers8Bit_Command,
         // Layout layout, uint32 flags
         kModifiers_Command,
-        // uint16 id, Type baseType
-        kNullableType_Command,
-        kNullLiteral_Command,
         // uint8 op, Expression operand
         kPostfix_Command,
         // uint8 op, Expression operand
@@ -111,6 +113,8 @@ public:
         kReturn_Command,
         // String name, Expression value
         kSetting_Command,
+        // uint16 id, Type structType
+        kStructDefinition_Command,
         // uint16 id, String name, uint8 fieldCount, (Modifiers, String, Type)[] fields
         kStructType_Command,
         // bool isStatic, SymbolTable symbols, Expression value, uint8 caseCount,
@@ -140,25 +144,11 @@ public:
         // uint16 varId, uint8 refKind
         kVariableReference_Command,
         kVoid_Command,
-        // Expression test, Statement body
-        kWhile_Command,
     };
 
     // src must remain in memory as long as the objects created from it do
-    Rehydrator(const Context* context, ModifiersPool* modifiers,
-               std::shared_ptr<SymbolTable> symbolTable, ErrorReporter* errorReporter,
-               const uint8_t* src, size_t length)
-        : fContext(*context)
-        , fModifiers(*modifiers)
-        , fErrors(errorReporter)
-        , fSymbolTable(std::move(symbolTable))
-        , fStart(src)
-        SkDEBUGCODE(, fEnd(fStart + length)) {
-        SkASSERT(fSymbolTable);
-        // skip past string data
-        fIP = fStart;
-        fIP += this->readU16();
-    }
+    Rehydrator(const Context* context, std::shared_ptr<SymbolTable> symbolTable,
+               const uint8_t* src, size_t length);
 
     std::vector<std::unique_ptr<ProgramElement>> elements();
 
@@ -196,14 +186,14 @@ private:
         return this->readS32();
     }
 
-    StringFragment readString() {
+    skstd::string_view readString() {
         uint16_t offset = this->readU16();
         uint8_t length = *(uint8_t*) (fStart + offset);
         const char* chars = (const char*) fStart + offset + 1;
-        return StringFragment(chars, length);
+        return skstd::string_view(chars, length);
     }
 
-    void addSymbol(int id, Symbol* symbol) {
+    void addSymbol(int id, const Symbol* symbol) {
         while ((size_t) id >= fSymbols.size()) {
             fSymbols.push_back(nullptr);
         }
@@ -221,7 +211,7 @@ private:
 
     Modifiers modifiers();
 
-    Symbol* symbol();
+    const Symbol* symbol();
 
     std::unique_ptr<ProgramElement> element();
 
@@ -229,13 +219,17 @@ private:
 
     std::unique_ptr<Expression> expression();
 
+    ExpressionArray expressionArray();
+
     const Type* type();
 
+    ErrorReporter* errorReporter() { return fContext.fErrors; }
+
+    ModifiersPool& modifiersPool() const { return *fContext.fModifiersPool; }
+
     const Context& fContext;
-    ModifiersPool& fModifiers;
-    ErrorReporter* fErrors;
     std::shared_ptr<SymbolTable> fSymbolTable;
-    std::vector<Symbol*> fSymbols;
+    std::vector<const Symbol*> fSymbols;
 
     const uint8_t* fStart;
     const uint8_t* fIP;

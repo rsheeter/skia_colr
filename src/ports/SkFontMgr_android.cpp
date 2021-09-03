@@ -358,18 +358,6 @@ protected:
         return sset->matchStyle(style);
     }
 
-    SkTypeface* onMatchFaceStyle(const SkTypeface* typeface,
-                                 const SkFontStyle& style) const override {
-        for (int i = 0; i < fStyleSets.count(); ++i) {
-            for (int j = 0; j < fStyleSets[i]->fStyles.count(); ++j) {
-                if (fStyleSets[i]->fStyles[j].get() == typeface) {
-                    return fStyleSets[i]->matchStyle(style);
-                }
-            }
-        }
-        return nullptr;
-    }
-
     static sk_sp<SkTypeface_AndroidSystem> find_family_style_character(
             const SkString& familyName,
             const SkTArray<NameToFamily, true>& fallbackNameToFamilyMap,
@@ -488,18 +476,6 @@ protected:
                                                               style, isFixedPitch, name));
     }
 
-    sk_sp<SkTypeface> onMakeFromFontData(std::unique_ptr<SkFontData> data) const override {
-        SkStreamAsset* stream(data->getStream());
-        bool isFixedPitch;
-        SkFontStyle style;
-        SkString name;
-        if (!fScanner.scanFont(stream, data->getIndex(), &name, &style, &isFixedPitch, nullptr)) {
-            return nullptr;
-        }
-        return sk_sp<SkTypeface>(new SkTypeface_AndroidStream(std::move(data),
-                                                              style, isFixedPitch, name));
-    }
-
     sk_sp<SkTypeface> onLegacyMakeTypeface(const char familyName[], SkFontStyle style) const override {
         if (familyName) {
             // On Android, we must return nullptr when we can't find the requested
@@ -548,11 +524,9 @@ private:
         int familyIndex = 0;
         for (FontFamily* family : families) {
             addFamily(*family, isolated, familyIndex++);
-            family->fallbackFamilies.foreach([this, isolated, &familyIndex]
-                (SkString, std::unique_ptr<FontFamily>* fallbackFamily) {
-                    addFamily(**fallbackFamily, isolated, familyIndex++);
-                }
-            );
+            for (const auto& [unused, fallbackFamily] : family->fallbackFamilies) {
+                addFamily(*fallbackFamily, isolated, familyIndex++);
+            }
         }
     }
 

@@ -31,8 +31,8 @@ void DebugLayerManager::setCommand(int nodeId, int frame, int command) {
   // Invalidate stored images that depended on this combination of node and frame.
   // actually this does all of the events for this nodeId, but close enough.
   auto relevantFrames = listFramesForNode(nodeId);
-  for (const auto& frame : relevantFrames) {
-    fDraws[{frame, nodeId}].image = nullptr;
+  for (const auto& f : relevantFrames) {
+    fDraws[{f, nodeId}].image = nullptr;
   }
 }
 
@@ -66,10 +66,10 @@ void DebugLayerManager::storeSkPicture(int nodeId, int frame, sk_sp<SkPicture> p
   keys.push_back(k);
 }
 
-void DebugLayerManager::drawLayerEventTo(SkCanvas* canvas, const int nodeId, const int frame) {
+void DebugLayerManager::drawLayerEventTo(SkSurface* surface, const int nodeId, const int frame) {
     auto& evt = fDraws[{frame, nodeId}];
-    evt.debugCanvas->drawTo(canvas, evt.command);
-    canvas->flush();
+    evt.debugCanvas->drawTo(surface->getCanvas(), evt.command);
+    surface->flush();
 }
 
 sk_sp<SkImage> DebugLayerManager::getLayerAsImage(const int nodeId, const int frame) {
@@ -105,9 +105,8 @@ sk_sp<SkImage> DebugLayerManager::getLayerAsImage(const int nodeId, const int fr
   // draw everything from the last full redraw up to the current frame.
   // other frames drawn are partial, meaning they were clipped to not completely cover the layer.
   // count back up with i
-  auto* canvas = surface->getCanvas();
   for (; i<relevantFrames.size() && relevantFrames[i]<=frameN; i++) {
-    drawLayerEventTo(canvas, nodeId, relevantFrames[i]);
+    drawLayerEventTo(surface.get(), nodeId, relevantFrames[i]);
   }
   drawEvent.image = surface->makeImageSnapshot();
   return drawEvent.image;

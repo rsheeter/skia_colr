@@ -12,11 +12,10 @@ DEFAULT_BUILD_PRODUCTS = [
   'dm.exe',
   'dm.app',
   'fm',
+  'fm.exe',
   'nanobench.app',
   'get_images_from_skps',
   'get_images_from_skps.exe',
-  'hello-opencl',
-  'hello-opencl.exe',
   'nanobench',
   'nanobench.exe',
   'skpbench',
@@ -28,7 +27,6 @@ DEFAULT_BUILD_PRODUCTS = [
   'skottie_tool',
   'lib/*.so',
   'run_testlab',
-  'skqp-universal-debug.apk',
 ]
 
 # TODO(westont): Use this in docker.py, instead of a copy of it.

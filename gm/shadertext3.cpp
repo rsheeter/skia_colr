@@ -9,7 +9,6 @@
 #include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkFontTypes.h"
 #include "include/core/SkMatrix.h"
@@ -83,9 +82,10 @@ protected:
 
         SkPaint bmpPaint;
         bmpPaint.setAntiAlias(true);
-        bmpPaint.setFilterQuality(kLow_SkFilterQuality);
         bmpPaint.setAlphaf(0.5f);
-        canvas->drawBitmap(fBmp, 5.f, 5.f, &bmpPaint);
+        SkSamplingOptions sampling(SkFilterMode::kLinear);
+
+        canvas->drawImage(fBmp.asImage(), 5.f, 5.f, sampling, &bmpPaint);
 
         SkFont  font(ToolUtils::create_portable_typeface(), SkIntToScalar(kPointSize));
         SkPaint outlinePaint;
@@ -116,8 +116,8 @@ protected:
 
                 SkPaint fillPaint;
                 fillPaint.setAntiAlias(true);
-                fillPaint.setFilterQuality(kLow_SkFilterQuality);
-                fillPaint.setShader(fBmp.makeShader(kTileModes[tm0], kTileModes[tm1], &localM));
+                fillPaint.setShader(fBmp.makeShader(kTileModes[tm0], kTileModes[tm1],
+                                                    sampling, localM));
 
                 constexpr char kText[] = "B";
                 canvas->drawString(kText, 0, 0, font, fillPaint);

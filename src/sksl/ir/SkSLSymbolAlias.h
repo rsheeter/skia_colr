@@ -8,33 +8,32 @@
 #ifndef SKSL_SYMBOLALIAS
 #define SKSL_SYMBOLALIAS
 
-#include "src/sksl/ir/SkSLSymbol.h"
+#include "include/private/SkSLSymbol.h"
 
 namespace SkSL {
 
 /**
  * A symbol representing a new name for an existing symbol.
  */
-class SymbolAlias : public Symbol {
+class SymbolAlias final : public Symbol {
 public:
     static constexpr Kind kSymbolKind = Kind::kSymbolAlias;
 
-    SymbolAlias(int offset, StringFragment name, Symbol* origSymbol)
-    : INHERITED(offset, SymbolAliasData{name, origSymbol}) {}
+    SymbolAlias(int offset, skstd::string_view name, const Symbol* origSymbol)
+        : INHERITED(offset, kSymbolKind, name)
+        , fOrigSymbol(origSymbol) {}
 
-    StringFragment name() const override {
-        return this->symbolAliasData().fName;
-    }
-
-    Symbol* origSymbol() const {
-        return this->symbolAliasData().fOrigSymbol;
+    const Symbol* origSymbol() const {
+        return fOrigSymbol;
     }
 
     String description() const override {
-        return this->name();
+        return String(this->name());
     }
 
 private:
+    const Symbol* fOrigSymbol;
+
     using INHERITED = Symbol;
 };
 

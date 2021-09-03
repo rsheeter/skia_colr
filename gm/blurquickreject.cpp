@@ -9,7 +9,6 @@
 #include "include/core/SkBlurTypes.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkColor.h"
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkMaskFilter.h"
 #include "include/core/SkPaint.h"
 #include "include/core/SkRect.h"
@@ -64,7 +63,6 @@ protected:
         hairlinePaint.setStrokeWidth(0);
 
         SkPaint blurPaint;
-        blurPaint.setFilterQuality(kLow_SkFilterQuality);
         blurPaint.setMaskFilter(SkMaskFilter::MakeBlur(kNormal_SkBlurStyle,
                                                     SkBlurMask::ConvertRadiusToSigma(kBlurRadius)));
 

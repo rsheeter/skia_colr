@@ -18,7 +18,6 @@
 class SkAutoPathBoundsUpdate;
 class SkData;
 class SkRRect;
-struct SkPathView;
 class SkWStream;
 
 // WIP -- define this locally, and fix call-sites to use SkPathBuilder (skbug.com/9000)
@@ -544,11 +543,6 @@ public:
     */
     void incReserve(int extraPtCount);
 
-    /** Shrinks SkPath verb array and SkPoint array storage to discard unused capacity.
-        May reduce the heap overhead for SkPath known to be fully constructed.
-    */
-    void shrinkToFit();
-
 #ifdef SK_HIDE_PATH_EDIT_METHODS
 private:
 #endif
@@ -1053,48 +1047,41 @@ public:
 private:
 #endif
 
-    /** Adds SkRect to SkPath, appending kMove_Verb, three kLine_Verb, and kClose_Verb,
-        starting with top-left corner of SkRect; followed by top-right, bottom-right,
-        and bottom-left if dir is kCW_Direction; or followed by bottom-left,
-        bottom-right, and top-right if dir is kCCW_Direction.
+    /** Adds a new contour to the path, defined by the rect, and wound in the
+        specified direction. The verbs added to the path will be:
 
-        @param rect  SkRect to add as a closed contour
-        @param dir   SkPath::Direction to wind added contour
-        @return      reference to SkPath
+        kMove, kLine, kLine, kLine, kClose
 
-        example: https://fiddle.skia.org/c/@Path_addRect
-    */
-    SkPath& addRect(const SkRect& rect, SkPathDirection dir = SkPathDirection::kCW);
+        start specifies which corner to begin the contour:
+            0: upper-left  corner
+            1: upper-right corner
+            2: lower-right corner
+            3: lower-left  corner
 
-    /** Adds SkRect to SkPath, appending kMove_Verb, three kLine_Verb, and kClose_Verb.
-        If dir is kCW_Direction, SkRect corners are added clockwise; if dir is
-        kCCW_Direction, SkRect corners are added counterclockwise.
-        start determines the first corner added.
+        This start point also acts as the implied beginning of the subsequent,
+        contour, if it does not have an explicit moveTo(). e.g.
+
+            path.addRect(...)
+            // if we don't say moveTo() here, we will use the rect's start point
+            path.lineTo(...)
 
         @param rect   SkRect to add as a closed contour
-        @param dir    SkPath::Direction to wind added contour
+        @param dir    SkPath::Direction to orient the new contour
         @param start  initial corner of SkRect to add
         @return       reference to SkPath
 
         example: https://fiddle.skia.org/c/@Path_addRect_2
-    */
+     */
     SkPath& addRect(const SkRect& rect, SkPathDirection dir, unsigned start);
 
-    /** Adds SkRect (left, top, right, bottom) to SkPath,
-        appending kMove_Verb, three kLine_Verb, and kClose_Verb,
-        starting with top-left corner of SkRect; followed by top-right, bottom-right,
-        and bottom-left if dir is kCW_Direction; or followed by bottom-left,
-        bottom-right, and top-right if dir is kCCW_Direction.
+    SkPath& addRect(const SkRect& rect, SkPathDirection dir = SkPathDirection::kCW) {
+        return this->addRect(rect, dir, 0);
+    }
 
-        @param left    smaller x-axis value of SkRect
-        @param top     smaller y-axis value of SkRect
-        @param right   larger x-axis value of SkRect
-        @param bottom  larger y-axis value of SkRect
-        @param dir     SkPath::Direction to wind added contour
-        @return        reference to SkPath
-    */
     SkPath& addRect(SkScalar left, SkScalar top, SkScalar right, SkScalar bottom,
-                    SkPathDirection dir = SkPathDirection::kCW);
+                    SkPathDirection dir = SkPathDirection::kCW) {
+        return this->addRect({left, top, right, bottom}, dir, 0);
+    }
 
     /** Adds oval to path, appending kMove_Verb, four kConic_Verb, and kClose_Verb.
         Oval is upright ellipse bounded by SkRect oval with radii equal to half oval width
@@ -1531,21 +1518,9 @@ public:
         bool            fForceClose;
         bool            fNeedClose;
         bool            fCloseLine;
-        enum SegmentState : uint8_t {
-            /** The current contour is empty. Starting processing or have just closed a contour. */
-            kEmptyContour_SegmentState,
-            /** Have seen a move, but nothing else. */
-            kAfterMove_SegmentState,
-            /** Have seen a primitive but not yet closed the path. Also the initial state. */
-            kAfterPrimitive_SegmentState
-        };
-        SegmentState    fSegmentState;
 
-        inline const SkPoint& cons_moveTo();
         Verb autoClose(SkPoint pts[2]);
     };
-
-    SkPathView view() const;
 
 private:
     /** \class SkPath::RangeIter
@@ -1611,7 +1586,7 @@ private:
                 case SkPathVerb::kQuad: return -1;
                 case SkPathVerb::kConic: return -1;
                 case SkPathVerb::kCubic: return -1;
-                case SkPathVerb::kClose: return 0;
+                case SkPathVerb::kClose: return -1;
             }
             SkUNREACHABLE;
         }
@@ -1699,37 +1674,22 @@ public:
     bool contains(SkScalar x, SkScalar y) const;
 
     /** Writes text representation of SkPath to stream. If stream is nullptr, writes to
-        standard output. Set forceClose to true to get edges used to fill SkPath.
-        Set dumpAsHex true to generate exact binary representations
+        standard output. Set dumpAsHex true to generate exact binary representations
         of floating point numbers used in SkPoint array and conic weights.
 
         @param stream      writable SkWStream receiving SkPath text representation; may be nullptr
-        @param forceClose  true if missing kClose_Verb is output
         @param dumpAsHex   true if SkScalar values are written as hexadecimal
 
         example: https://fiddle.skia.org/c/@Path_dump
     */
-    void dump(SkWStream* stream, bool forceClose, bool dumpAsHex) const;
+    void dump(SkWStream* stream, bool dumpAsHex) const;
 
-    /** Writes text representation of SkPath to standard output. The representation may be
-        directly compiled as C++ code. Floating point values are written
-        with limited precision; it may not be possible to reconstruct original SkPath
-        from output.
+    void dump() const { this->dump(nullptr, false); }
+    void dumpHex() const { this->dump(nullptr, true); }
 
-        example: https://fiddle.skia.org/c/@Path_dump_2
-    */
-    void dump() const;
-
-    /** Writes text representation of SkPath to standard output. The representation may be
-        directly compiled as C++ code. Floating point values are written
-        in hexadecimal to preserve their exact bit pattern. The output reconstructs the
-        original SkPath.
-
-        Use instead of dump() when submitting
-
-        example: https://fiddle.skia.org/c/@Path_dumpHex
-    */
-    void dumpHex() const;
+    // Like dump(), but outputs for the SkPath::Make() factory
+    void dumpArrays(SkWStream* stream, bool dumpAsHex) const;
+    void dumpArrays() const { this->dumpArrays(nullptr, false); }
 
     /** Writes SkPath to buffer, returning the number of bytes written.
         Pass nullptr to obtain the storage size.
@@ -1890,17 +1850,15 @@ private:
     /** Returns the comvexity type, computing if needed. Never returns kUnknown.
         @return  path's convexity type (convex or concave)
     */
-    SkPathConvexity getConvexity() const {
-        SkPathConvexity convexity = this->getConvexityOrUnknown();
-        if (convexity == SkPathConvexity::kUnknown) {
-            convexity = this->computeConvexity();
-        }
-        SkASSERT(convexity != SkPathConvexity::kUnknown);
-        return convexity;
-    }
+    SkPathConvexity getConvexity() const;
+
     SkPathConvexity getConvexityOrUnknown() const {
         return (SkPathConvexity)fConvexity.load(std::memory_order_relaxed);
     }
+
+    // Compares the cached value with a freshly computed one (computeConvexity())
+    bool isConvexityAccurate() const;
+
     /** Stores a convexity type for this path. This is what will be returned if
      *  getConvexityOrUnknown() is called. If you pass kUnknown, then if getContexityType()
      *  is called, the real convexity will be computed.
@@ -1908,6 +1866,14 @@ private:
      *  example: https://fiddle.skia.org/c/@Path_setConvexity
      */
     void setConvexity(SkPathConvexity convexity);
+
+    /** Shrinks SkPath verb array and SkPoint array storage to discard unused capacity.
+     *  May reduce the heap overhead for SkPath known to be fully constructed.
+     *
+     *  NOTE: This may relocate the underlying buffers, and thus any Iterators referencing
+     *        this path should be discarded after calling shrinkToFit().
+     */
+    void shrinkToFit();
 
     friend class SkAutoPathBoundsUpdate;
     friend class SkAutoDisableOvalCheck;

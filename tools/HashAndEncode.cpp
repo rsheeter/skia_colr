@@ -29,6 +29,7 @@ HashAndEncode::HashAndEncode(const SkBitmap& bitmap) : fSize(bitmap.info().dimen
         case kARGB_4444_SkColorType:          srcFmt = skcms_PixelFormat_ABGR_4444;       break;
         case kRGBA_8888_SkColorType:          srcFmt = skcms_PixelFormat_RGBA_8888;       break;
         case kBGRA_8888_SkColorType:          srcFmt = skcms_PixelFormat_BGRA_8888;       break;
+        case kSRGBA_8888_SkColorType:         srcFmt = skcms_PixelFormat_RGBA_8888_sRGB;  break;
         case kRGBA_1010102_SkColorType:       srcFmt = skcms_PixelFormat_RGBA_1010102;    break;
         case kBGRA_1010102_SkColorType:       srcFmt = skcms_PixelFormat_BGRA_1010102;    break;
         case kGray_8_SkColorType:             srcFmt = skcms_PixelFormat_G_8;             break;
@@ -68,10 +69,19 @@ HashAndEncode::HashAndEncode(const SkBitmap& bitmap) : fSize(bitmap.info().dimen
     int N = fSize.width() * fSize.height();
     fPixels.reset(new uint64_t[N]);
 
-    if (!skcms_Transform(bitmap.getPixels(), srcFmt, srcAlpha, &srcProfile,
-                         fPixels.get(),      dstFmt, dstAlpha, &dstProfile, N)) {
-        SkASSERT(false);
-        fPixels.reset(nullptr);
+    const void* src = bitmap.getPixels();
+    void* dst = fPixels.get();
+    while (N > 0) {
+        int todo = std::min(N, 1<<27);  // Keep todo*8 <= 1B; skcms requires N*bpp < MAX_INT.
+        if (!skcms_Transform(src, srcFmt, srcAlpha, &srcProfile,
+                             dst, dstFmt, dstAlpha, &dstProfile, todo)) {
+            SkASSERT(false);
+            fPixels.reset(nullptr);
+            break;
+        }
+        src = (char*)src + todo*SkColorTypeBytesPerPixel(bitmap.colorType());
+        dst = (char*)dst + todo*sizeof(uint64_t);
+        N -= todo;
     }
 }
 

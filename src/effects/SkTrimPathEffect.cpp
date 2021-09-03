@@ -7,6 +7,7 @@
 
 #include "include/core/SkPathMeasure.h"
 #include "include/effects/SkTrimPathEffect.h"
+#include "include/private/SkTPin.h"
 #include "src/core/SkReadBuffer.h"
 #include "src/core/SkWriteBuffer.h"
 #include "src/effects/SkTrimPE.h"
@@ -47,7 +48,8 @@ static size_t add_segments(const SkPath& src, SkScalar start, SkScalar stop, SkP
 SkTrimPE::SkTrimPE(SkScalar startT, SkScalar stopT, SkTrimPathEffect::Mode mode)
     : fStartT(startT), fStopT(stopT), fMode(mode) {}
 
-bool SkTrimPE::onFilterPath(SkPath* dst, const SkPath& src, SkStrokeRec*, const SkRect*) const {
+bool SkTrimPE::onFilterPath(SkPath* dst, const SkPath& src, SkStrokeRec*, const SkRect*,
+                            const SkMatrix&) const {
     if (fStartT >= fStopT) {
         SkASSERT(fMode == SkTrimPathEffect::Mode::kNormal);
         return true;

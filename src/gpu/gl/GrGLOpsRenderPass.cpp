@@ -12,12 +12,12 @@
 
 #ifdef SK_DEBUG
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #endif
 
 #define GL_CALL(X) GR_GL_CALL(fGpu->glInterface(), X)
 
-void GrGLOpsRenderPass::set(GrRenderTarget* rt, const SkIRect& contentBounds,
+void GrGLOpsRenderPass::set(GrRenderTarget* rt, bool useMSAASurface, const SkIRect& contentBounds,
                             GrSurfaceOrigin origin, const LoadAndStoreInfo& colorInfo,
                             const StencilLoadAndStoreInfo& stencilInfo) {
     SkASSERT(fGpu);
@@ -25,36 +25,74 @@ void GrGLOpsRenderPass::set(GrRenderTarget* rt, const SkIRect& contentBounds,
     SkASSERT(fGpu == rt->getContext()->priv().getGpu());
 
     this->INHERITED::set(rt, origin);
+    fUseMultisampleFBO = useMSAASurface;
     fContentBounds = contentBounds;
     fColorLoadAndStoreInfo = colorInfo;
     fStencilLoadAndStoreInfo = stencilInfo;
 }
 
+GrNativeRect GrGLOpsRenderPass::dmsaaLoadStoreBounds() const {
+    if (fGpu->glCaps().framebufferResolvesMustBeFullSize()) {
+        // If frambeffer resolves have to be full size, then resolve the entire render target during
+        // load and store both, even if we will be doing so with a draw. We do this because we will
+        // have no other choice than to do a full size resolve at the end of the render pass, so the
+        // full DMSAA attachment needs to have valid content.
+        return GrNativeRect::MakeRelativeTo(fOrigin, fRenderTarget->height(),
+                                            SkIRect::MakeSize(fRenderTarget->dimensions()));
+    } else {
+        return GrNativeRect::MakeRelativeTo(fOrigin, fRenderTarget->height(), fContentBounds);
+    }
+}
+
 void GrGLOpsRenderPass::onBegin() {
-    fGpu->beginCommandBuffer(fRenderTarget, fContentBounds, fOrigin, fColorLoadAndStoreInfo,
-                             fStencilLoadAndStoreInfo);
+    auto glRT = static_cast<GrGLRenderTarget*>(fRenderTarget);
+    if (fUseMultisampleFBO &&
+        fColorLoadAndStoreInfo.fLoadOp == GrLoadOp::kLoad &&
+        glRT->hasDynamicMSAAAttachment()) {
+        // Load the single sample fbo into the dmsaa attachment.
+        if (fGpu->glCaps().canResolveSingleToMSAA()) {
+            fGpu->resolveRenderFBOs(glRT, this->dmsaaLoadStoreBounds().asSkIRect(),
+                                    GrGLGpu::ResolveDirection::kSingleToMSAA);
+        } else {
+            fGpu->drawSingleIntoMSAAFBO(glRT, this->dmsaaLoadStoreBounds().asSkIRect());
+        }
+    }
+
+    fGpu->beginCommandBuffer(glRT, fUseMultisampleFBO, fContentBounds, fOrigin,
+                             fColorLoadAndStoreInfo, fStencilLoadAndStoreInfo);
 }
 
 void GrGLOpsRenderPass::onEnd() {
-    fGpu->endCommandBuffer(fRenderTarget, fColorLoadAndStoreInfo, fStencilLoadAndStoreInfo);
+    auto glRT = static_cast<GrGLRenderTarget*>(fRenderTarget);
+    fGpu->endCommandBuffer(glRT, fUseMultisampleFBO, fColorLoadAndStoreInfo,
+                           fStencilLoadAndStoreInfo);
+
+    if (fUseMultisampleFBO &&
+        fColorLoadAndStoreInfo.fStoreOp == GrStoreOp::kStore &&
+        glRT->hasDynamicMSAAAttachment()) {
+        // Blit the msaa attachment into the single sample fbo.
+        fGpu->resolveRenderFBOs(glRT, this->dmsaaLoadStoreBounds().asSkIRect(),
+                                GrGLGpu::ResolveDirection::kMSAAToSingle,
+                                true /*invalidateReadBufferAfterBlit*/);
+    }
 }
 
 bool GrGLOpsRenderPass::onBindPipeline(const GrProgramInfo& programInfo,
                                        const SkRect& drawBounds) {
     fPrimitiveType = programInfo.primitiveType();
-    return fGpu->flushGLState(fRenderTarget, programInfo);
+    return fGpu->flushGLState(fRenderTarget, fUseMultisampleFBO, programInfo);
 }
 
 void GrGLOpsRenderPass::onSetScissorRect(const SkIRect& scissor) {
-    fGpu->flushScissorRect(scissor, fRenderTarget->width(), fRenderTarget->height(), fOrigin);
+    fGpu->flushScissorRect(scissor, fRenderTarget->height(), fOrigin);
 }
 
-bool GrGLOpsRenderPass::onBindTextures(const GrPrimitiveProcessor& primProc,
-                                       const GrSurfaceProxy* const primProcTextures[],
+bool GrGLOpsRenderPass::onBindTextures(const GrGeometryProcessor& geomProc,
+                                       const GrSurfaceProxy* const geomProcTextures[],
                                        const GrPipeline& pipeline) {
     GrGLProgram* program = fGpu->currentProgram();
     SkASSERT(program);
-    program->bindTextures(primProc, primProcTextures, pipeline);
+    program->bindTextures(geomProc, geomProcTextures, pipeline);
     return true;
 }
 
@@ -232,6 +270,8 @@ static const void* buffer_offset_to_gl_address(const GrBuffer* drawIndirectBuffe
 
 void GrGLOpsRenderPass::onDrawIndirect(const GrBuffer* drawIndirectBuffer, size_t offset,
                                        int drawCount) {
+    using MultiDrawType = GrGLCaps::MultiDrawType;
+
     SkASSERT(fGpu->caps()->nativeDrawIndirectSupport());
     SkASSERT(fGpu->glCaps().baseVertexBaseInstanceSupport());
     SkASSERT(fDidBindVertexBuffer || fGpu->glCaps().drawArraysBaseVertexIsBroken());
@@ -242,14 +282,15 @@ void GrGLOpsRenderPass::onDrawIndirect(const GrBuffer* drawIndirectBuffer, size_
         this->bindVertexBuffer(fActiveVertexBuffer.get(), 0);
     }
 
-    if (fGpu->glCaps().ANGLEMultiDrawSupport()) {
-        this->multiDrawArraysANGLE(drawIndirectBuffer, offset, drawCount);
+    if (fGpu->glCaps().multiDrawType() == MultiDrawType::kANGLEOrWebGL) {
+        // ANGLE and WebGL don't support glDrawElementsIndirect. We draw everything as a multi draw.
+        this->multiDrawArraysANGLEOrWebGL(drawIndirectBuffer, offset, drawCount);
         return;
     }
 
     fGpu->bindBuffer(GrGpuBufferType::kDrawIndirect, drawIndirectBuffer);
 
-    if (fGpu->glCaps().multiDrawIndirectSupport() && drawCount > 1) {
+    if (drawCount > 1 && fGpu->glCaps().multiDrawType() == MultiDrawType::kMultiDrawIndirect) {
         GrGLenum glPrimType = fGpu->prepareToDraw(fPrimitiveType);
         GL_CALL(MultiDrawArraysIndirect(glPrimType,
                                         buffer_offset_to_gl_address(drawIndirectBuffer, offset),
@@ -265,9 +306,9 @@ void GrGLOpsRenderPass::onDrawIndirect(const GrBuffer* drawIndirectBuffer, size_
     }
 }
 
-void GrGLOpsRenderPass::multiDrawArraysANGLE(const GrBuffer* drawIndirectBuffer, size_t offset,
-                                             int drawCount) {
-    SkASSERT(fGpu->glCaps().ANGLEMultiDrawSupport());
+void GrGLOpsRenderPass::multiDrawArraysANGLEOrWebGL(const GrBuffer* drawIndirectBuffer,
+                                                    size_t offset, int drawCount) {
+    SkASSERT(fGpu->glCaps().multiDrawType() == GrGLCaps::MultiDrawType::kANGLEOrWebGL);
     SkASSERT(drawIndirectBuffer->isCpuBuffer());
 
     constexpr static int kMaxDrawCountPerBatch = 128;
@@ -283,14 +324,20 @@ void GrGLOpsRenderPass::multiDrawArraysANGLE(const GrBuffer* drawIndirectBuffer,
     while (drawCount) {
         int countInBatch = std::min(drawCount, kMaxDrawCountPerBatch);
         for (int i = 0; i < countInBatch; ++i) {
-            const auto& cmd = cmds[i];
-            fFirsts[i] = cmd.fBaseVertex;
-            fCounts[i] = cmd.fVertexCount;
-            fInstanceCounts[i] = cmd.fInstanceCount;
-            fBaseInstances[i] = cmd.fBaseInstance;
+            auto [vertexCount, instanceCount, baseVertex, baseInstance] = cmds[i];
+            fFirsts[i] = baseVertex;
+            fCounts[i] = vertexCount;
+            fInstanceCounts[i] = instanceCount;
+            fBaseInstances[i] = baseInstance;
         }
-        GL_CALL(MultiDrawArraysInstancedBaseInstance(glPrimType, fFirsts, fCounts, fInstanceCounts,
-                                                     fBaseInstances, countInBatch));
+        if (countInBatch == 1) {
+            GL_CALL(DrawArraysInstancedBaseInstance(glPrimType, fFirsts[0], fCounts[0],
+                                                    fInstanceCounts[0], fBaseInstances[0]));
+        } else {
+            GL_CALL(MultiDrawArraysInstancedBaseInstance(glPrimType, fFirsts, fCounts,
+                                                         fInstanceCounts, fBaseInstances,
+                                                         countInBatch));
+        }
         drawCount -= countInBatch;
         cmds += countInBatch;
     }
@@ -298,6 +345,8 @@ void GrGLOpsRenderPass::multiDrawArraysANGLE(const GrBuffer* drawIndirectBuffer,
 
 void GrGLOpsRenderPass::onDrawIndexedIndirect(const GrBuffer* drawIndirectBuffer, size_t offset,
                                               int drawCount) {
+    using MultiDrawType = GrGLCaps::MultiDrawType;
+
     SkASSERT(fGpu->caps()->nativeDrawIndirectSupport());
     SkASSERT(!fGpu->caps()->nativeDrawIndexedIndirectIsBroken());
     SkASSERT(fGpu->glCaps().baseVertexBaseInstanceSupport());
@@ -305,14 +354,15 @@ void GrGLOpsRenderPass::onDrawIndexedIndirect(const GrBuffer* drawIndirectBuffer
     // onBindBuffers and not expecting to bind it until this point).
     SkASSERT(fDidBindVertexBuffer);
 
-    if (fGpu->glCaps().ANGLEMultiDrawSupport()) {
-        this->multiDrawElementsANGLE(drawIndirectBuffer, offset, drawCount);
+    if (fGpu->glCaps().multiDrawType() == MultiDrawType::kANGLEOrWebGL) {
+        // ANGLE and WebGL don't support glDrawElementsIndirect. We draw everything as a multi draw.
+        this->multiDrawElementsANGLEOrWebGL(drawIndirectBuffer, offset, drawCount);
         return;
     }
 
     fGpu->bindBuffer(GrGpuBufferType::kDrawIndirect, drawIndirectBuffer);
 
-    if (fGpu->glCaps().multiDrawIndirectSupport() && drawCount > 1) {
+    if (drawCount > 1 && fGpu->glCaps().multiDrawType() == MultiDrawType::kMultiDrawIndirect) {
         GrGLenum glPrimType = fGpu->prepareToDraw(fPrimitiveType);
         GL_CALL(MultiDrawElementsIndirect(glPrimType, GR_GL_UNSIGNED_SHORT,
                                           buffer_offset_to_gl_address(drawIndirectBuffer, offset),
@@ -328,9 +378,9 @@ void GrGLOpsRenderPass::onDrawIndexedIndirect(const GrBuffer* drawIndirectBuffer
     }
 }
 
-void GrGLOpsRenderPass::multiDrawElementsANGLE(const GrBuffer* drawIndirectBuffer, size_t offset,
-                                               int drawCount) {
-    SkASSERT(fGpu->glCaps().ANGLEMultiDrawSupport());
+void GrGLOpsRenderPass::multiDrawElementsANGLEOrWebGL(const GrBuffer* drawIndirectBuffer,
+                                                      size_t offset, int drawCount) {
+    SkASSERT(fGpu->glCaps().multiDrawType() == GrGLCaps::MultiDrawType::kANGLEOrWebGL);
     SkASSERT(drawIndirectBuffer->isCpuBuffer());
 
     constexpr static int kMaxDrawCountPerBatch = 128;
@@ -347,26 +397,34 @@ void GrGLOpsRenderPass::multiDrawElementsANGLE(const GrBuffer* drawIndirectBuffe
     while (drawCount) {
         int countInBatch = std::min(drawCount, kMaxDrawCountPerBatch);
         for (int i = 0; i < countInBatch; ++i) {
-            const auto& cmd = cmds[i];
-            fCounts[i] = cmd.fIndexCount;
-            fIndices[i] = this->offsetForBaseIndex(cmd.fBaseIndex);
-            fInstanceCounts[i] = cmd.fInstanceCount;
-            fBaseVertices[i] = cmd.fBaseVertex;
-            fBaseInstances[i] = cmd.fBaseInstance;
+            auto [indexCount, instanceCount, baseIndex, baseVertex, baseInstance] = cmds[i];
+            fCounts[i] = indexCount;
+            fIndices[i] = this->offsetForBaseIndex(baseIndex);
+            fInstanceCounts[i] = instanceCount;
+            fBaseVertices[i] = baseVertex;
+            fBaseInstances[i] = baseInstance;
         }
-        GL_CALL(MultiDrawElementsInstancedBaseVertexBaseInstance(glPrimType, fCounts,
-                                                                 GR_GL_UNSIGNED_SHORT, fIndices,
-                                                                 fInstanceCounts, fBaseVertices,
-                                                                 fBaseInstances, countInBatch));
+        if (countInBatch == 1) {
+            GL_CALL(DrawElementsInstancedBaseVertexBaseInstance(glPrimType, fCounts[0],
+                                                                GR_GL_UNSIGNED_SHORT, fIndices[0],
+                                                                fInstanceCounts[0],
+                                                                fBaseVertices[0],
+                                                                fBaseInstances[0]));
+        } else {
+            GL_CALL(MultiDrawElementsInstancedBaseVertexBaseInstance(glPrimType, fCounts,
+                                                                     GR_GL_UNSIGNED_SHORT, fIndices,
+                                                                     fInstanceCounts, fBaseVertices,
+                                                                     fBaseInstances, countInBatch));
+        }
         drawCount -= countInBatch;
         cmds += countInBatch;
     }
 }
 
-void GrGLOpsRenderPass::onClear(const GrScissorState& scissor, const SkPMColor4f& color) {
-    fGpu->clear(scissor, color, fRenderTarget, fOrigin);
+void GrGLOpsRenderPass::onClear(const GrScissorState& scissor, std::array<float, 4> color) {
+    fGpu->clear(scissor, color, fRenderTarget, fUseMultisampleFBO, fOrigin);
 }
 
 void GrGLOpsRenderPass::onClearStencilClip(const GrScissorState& scissor, bool insideStencilMask) {
-    fGpu->clearStencilClip(scissor, insideStencilMask, fRenderTarget, fOrigin);
+    fGpu->clearStencilClip(scissor, insideStencilMask, fRenderTarget, fUseMultisampleFBO, fOrigin);
 }

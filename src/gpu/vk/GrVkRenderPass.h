@@ -12,6 +12,8 @@
 #include "include/gpu/vk/GrVkTypes.h"
 #include "src/gpu/vk/GrVkManagedResource.h"
 
+#include <cinttypes>
+
 class GrProcessorKeyBuilder;
 class GrVkGpu;
 class GrVkRenderTarget;
@@ -43,6 +45,7 @@ public:
             , fRenderPass(renderPass)
             , fAttachmentFlags(kExternal_AttachmentFlag)
             , fSelfDepFlags(SelfDependencyFlags::kNone)
+            , fLoadFromResolve(LoadFromResolve::kNo)
             , fClearValueCount(0)
             , fColorAttachmentIndex(colorAttachmentIndex) {}
 
@@ -69,6 +72,7 @@ public:
             }
         };
         AttachmentDesc fColor;
+        AttachmentDesc fResolve;
         AttachmentDesc fStencil;
         uint32_t       fAttachmentCount;
     };
@@ -76,11 +80,12 @@ public:
     enum AttachmentFlags {
         kColor_AttachmentFlag = 0x1,
         kStencil_AttachmentFlag = 0x2,
+        kResolve_AttachmentFlag = 0x4,
         // The external attachment flag signals that this render pass is imported from an external
         // client. Since we don't know every attachment on the render pass we don't set any of the
         // specific attachment flags when using external. However, the external render pass must
         // at least have a color attachment.
-        kExternal_AttachmentFlag = 0x4,
+        kExternal_AttachmentFlag = 0x8,
     };
     GR_DECL_BITFIELD_OPS_FRIENDS(AttachmentFlags);
 
@@ -91,13 +96,20 @@ public:
     };
     GR_DECL_BITFIELD_CLASS_OPS_FRIENDS(SelfDependencyFlags);
 
+    enum class LoadFromResolve {
+        kNo,
+        kLoad,
+    };
+
     static GrVkRenderPass* CreateSimple(GrVkGpu*,
                                         AttachmentsDescriptor*,
                                         AttachmentFlags,
-                                        SelfDependencyFlags selfDepFlags);
+                                        SelfDependencyFlags selfDepFlags,
+                                        LoadFromResolve);
     static GrVkRenderPass* Create(GrVkGpu*,
                                   const GrVkRenderPass& compatibleRenderPass,
                                   const LoadStoreOps& colorOp,
+                                  const LoadStoreOps& resolveOp,
                                   const LoadStoreOps& stencilOp);
 
     // The following return the index of the render pass attachment array for the given attachment.
@@ -106,26 +118,32 @@ public:
     bool colorAttachmentIndex(uint32_t* index) const;
     bool stencilAttachmentIndex(uint32_t* index) const;
     bool hasStencilAttachment() const { return fAttachmentFlags & kStencil_AttachmentFlag; }
+    bool hasResolveAttachment() const { return fAttachmentFlags & kResolve_AttachmentFlag; }
 
     SelfDependencyFlags selfDependencyFlags() const { return fSelfDepFlags; }
+    LoadFromResolve loadFromResolve() const { return fLoadFromResolve; }
 
     // Returns whether or not the structure of a RenderTarget matches that of the VkRenderPass in
     // this object. Specifically this compares that the number of attachments, format of
     // attachments, and sample counts are all the same. This function is used in the creation of
     // basic RenderPasses that can be used when creating a VkFrameBuffer object.
-    bool isCompatible(const GrVkRenderTarget& target, SelfDependencyFlags selfDepFlags) const;
+    bool isCompatible(GrVkRenderTarget* target,
+                      SelfDependencyFlags selfDepFlags,
+                      LoadFromResolve) const;
 
     bool isCompatible(const GrVkRenderPass& renderPass) const;
 
     bool isCompatible(const AttachmentsDescriptor&,
                       const AttachmentFlags&,
-                      SelfDependencyFlags selfDepFlags) const;
+                      SelfDependencyFlags selfDepFlags,
+                      LoadFromResolve) const;
 
     bool isCompatibleExternalRP(VkRenderPass) const;
 
     SkDEBUGCODE(bool isExternal() const { return fAttachmentFlags & kExternal_AttachmentFlag; })
 
     bool equalLoadStoreOps(const LoadStoreOps& colorOps,
+                           const LoadStoreOps& resolveOps,
                            const LoadStoreOps& stencilOps) const;
 
     VkRenderPass vkRenderPass() const { return fRenderPass; }
@@ -143,25 +161,29 @@ public:
                        AttachmentFlags,
                        const AttachmentsDescriptor&,
                        SelfDependencyFlags selfDepFlags,
+                       LoadFromResolve,
                        uint64_t externalRenderPass);
 
 #ifdef SK_TRACE_MANAGED_RESOURCES
     void dumpInfo() const override {
-        SkDebugf("GrVkRenderPass: %d (%d refs)\n", fRenderPass, this->getRefCnt());
+        SkDebugf("GrVkRenderPass: %" PRIdPTR " (%d refs)\n",
+                 (intptr_t)fRenderPass, this->getRefCnt());
     }
 #endif
 
 private:
     GrVkRenderPass(const GrVkGpu*, VkRenderPass, AttachmentFlags, const AttachmentsDescriptor&,
-                   SelfDependencyFlags selfDepFlags, const VkExtent2D& granularity,
+                   SelfDependencyFlags selfDepFlags, LoadFromResolve, const VkExtent2D& granularity,
                    uint32_t clearValueCount);
 
     static GrVkRenderPass* Create(GrVkGpu* gpu,
                                   AttachmentFlags,
                                   AttachmentsDescriptor*,
                                   const LoadStoreOps& colorOps,
+                                  const LoadStoreOps& resolveOp,
                                   const LoadStoreOps& stencilOps,
-                                  SelfDependencyFlags selfDepFlags);
+                                  SelfDependencyFlags selfDepFlags,
+                                  LoadFromResolve);
 
     void freeGPUData() const override;
 
@@ -169,15 +191,17 @@ private:
     AttachmentFlags       fAttachmentFlags;
     AttachmentsDescriptor fAttachmentsDescriptor;
     SelfDependencyFlags   fSelfDepFlags;
+    LoadFromResolve       fLoadFromResolve;
     VkExtent2D            fGranularity;
     uint32_t              fClearValueCount;
     // For internally created render passes we assume the color attachment index is always 0.
     uint32_t              fColorAttachmentIndex = 0;
+    uint32_t              fResolveAttachmentIndex = 0;
 
     using INHERITED = GrVkManagedResource;
 };
 
-GR_MAKE_BITFIELD_OPS(GrVkRenderPass::AttachmentFlags);
-GR_MAKE_BITFIELD_CLASS_OPS(GrVkRenderPass::SelfDependencyFlags);
+GR_MAKE_BITFIELD_OPS(GrVkRenderPass::AttachmentFlags)
+GR_MAKE_BITFIELD_CLASS_OPS(GrVkRenderPass::SelfDependencyFlags)
 
 #endif

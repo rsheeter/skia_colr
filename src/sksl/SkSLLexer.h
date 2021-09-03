@@ -11,6 +11,7 @@
 #define SKSL_Lexer
 #include <cstddef>
 #include <cstdint>
+#include "include/core/SkStringView.h"
 namespace SkSL {
 
 struct Token {
@@ -34,7 +35,6 @@ struct Token {
         TK_CONTINUE,
         TK_DISCARD,
         TK_RETURN,
-        TK_NULL_LITERAL,
         TK_IN,
         TK_OUT,
         TK_INOUT,
@@ -42,26 +42,17 @@ struct Token {
         TK_CONST,
         TK_FLAT,
         TK_NOPERSPECTIVE,
-        TK_READONLY,
-        TK_WRITEONLY,
-        TK_COHERENT,
-        TK_VOLATILE,
-        TK_RESTRICT,
-        TK_BUFFER,
         TK_INLINE,
+        TK_NOINLINE,
         TK_HASSIDEEFFECTS,
-        TK_PLS,
-        TK_PLSIN,
-        TK_PLSOUT,
-        TK_VARYING,
         TK_STRUCT,
         TK_LAYOUT,
-        TK_PRECISION,
-        TK_ENUM,
-        TK_CLASS,
+        TK_HIGHP,
+        TK_MEDIUMP,
+        TK_LOWP,
+        TK_ES3,
         TK_IDENTIFIER,
         TK_DIRECTIVE,
-        TK_SECTION,
         TK_LPAREN,
         TK_RPAREN,
         TK_LBRACE,
@@ -88,7 +79,6 @@ struct Token {
         TK_LOGICALAND,
         TK_LOGICALNOT,
         TK_QUESTION,
-        TK_COLONCOLON,
         TK_COLON,
         TK_EQ,
         TK_EQEQ,
@@ -107,18 +97,16 @@ struct Token {
         TK_BITWISEOREQ,
         TK_BITWISEXOREQ,
         TK_BITWISEANDEQ,
-        TK_LOGICALOREQ,
-        TK_LOGICALXOREQ,
-        TK_LOGICALANDEQ,
         TK_SEMICOLON,
         TK_ARROW,
         TK_WHITESPACE,
         TK_LINE_COMMENT,
         TK_BLOCK_COMMENT,
         TK_INVALID,
+        TK_NONE,
     };
 
-    Token() : fKind(Kind::TK_INVALID), fOffset(-1), fLength(-1) {}
+    Token() : fKind(Kind::TK_NONE), fOffset(-1), fLength(-1) {}
 
     Token(Kind kind, int32_t offset, int32_t length)
             : fKind(kind), fOffset(offset), fLength(length) {}
@@ -130,17 +118,19 @@ struct Token {
 
 class Lexer {
 public:
-    void start(const char* text, int32_t length) {
+    void start(skstd::string_view text) {
         fText = text;
-        fLength = length;
         fOffset = 0;
     }
 
     Token next();
 
+    int32_t getCheckpoint() const { return fOffset; }
+
+    void rewindToCheckpoint(int32_t checkpoint) { fOffset = checkpoint; }
+
 private:
-    const char* fText;
-    int32_t fLength;
+    skstd::string_view fText;
     int32_t fOffset;
 };
 

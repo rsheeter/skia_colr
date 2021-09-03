@@ -8,7 +8,6 @@
 #include "experimental/ffmpeg/SkVideoDecoder.h"
 #include "include/core/SkColorSpace.h"
 #include "include/core/SkImage.h"
-#include "include/core/SkYUVAIndex.h"
 #include "include/core/SkYUVAPixmaps.h"
 
 static SkYUVColorSpace get_yuvspace(AVColorSpace space) {
@@ -166,7 +165,10 @@ static sk_sp<SkImage> make_yuv_420(GrRecordingContext* rContext,
                                    int const strides[],
                                    SkYUVColorSpace yuvSpace,
                                    sk_sp<SkColorSpace> cs) {
-    SkYUVAInfo yuvaInfo({w, h}, SkYUVAInfo::PlanarConfig::kY_U_V_420, yuvSpace);
+    SkYUVAInfo yuvaInfo({w, h},
+                        SkYUVAInfo::PlaneConfig::kY_U_V,
+                        SkYUVAInfo::Subsampling::k420,
+                        yuvSpace);
     SkPixmap pixmaps[3];
     pixmaps[0].reset(SkImageInfo::MakeA8(w, h), data[0], strides[0]);
     w = (w + 1)/2;
@@ -253,9 +255,9 @@ sk_sp<SkImage> SkVideoDecoder::convertFrame(const AVFrame* frame) {
 }
 
 sk_sp<SkImage> SkVideoDecoder::nextImage(double* timeStamp) {
-    double dummyTimeStampStorage = 0;
+    double defaultTimeStampStorage = 0;
     if (!timeStamp) {
-        timeStamp = &dummyTimeStampStorage;
+        timeStamp = &defaultTimeStampStorage;
     }
 
     if (fFormatCtx == nullptr) {

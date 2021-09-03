@@ -63,6 +63,18 @@ struct SK_API SkIRect {
         return SkIRect{0, 0, size.fWidth, size.fHeight};
     }
 
+    /** Returns constructed SkIRect set to (pt.x(), pt.y(), pt.x() + size.width(),
+        pt.y() + size.height()). Does not validate input; size.width() or size.height() may be
+        negative.
+
+        @param pt    values for SkIRect fLeft and fTop
+        @param size  values for SkIRect width and height
+        @return      bounds at pt with width and height of size
+    */
+    static constexpr SkIRect SK_WARN_UNUSED_RESULT MakePtSize(SkIPoint pt, SkISize size) {
+        return MakeXYWH(pt.x(), pt.y(), size.width(), size.height());
+    }
+
     /** Returns constructed SkIRect set to (l, t, r, b). Does not sort input; SkIRect may
         result in fLeft greater than fRight, or fTop greater than fBottom.
 
@@ -261,6 +273,13 @@ struct SK_API SkIRect {
         fTop    = 0;
         fRight  = width;
         fBottom = height;
+    }
+
+    void setSize(SkISize size) {
+        fLeft = 0;
+        fTop = 0;
+        fRight = size.width();
+        fBottom = size.height();
     }
 
     /** Returns SkIRect offset by (dx, dy).
@@ -510,8 +529,7 @@ struct SK_API SkIRect {
         @return   true if a and b have area in common
     */
     static bool Intersects(const SkIRect& a, const SkIRect& b) {
-        SkIRect dummy;
-        return dummy.intersect(a, b);
+        return SkIRect{}.intersect(a, b);
     }
 
     /** Sets SkIRect to the union of itself and r.
@@ -1277,6 +1295,18 @@ public:
     SkIRect roundOut() const {
         SkIRect ir;
         this->roundOut(&ir);
+        return ir;
+    }
+    /** Sets SkIRect by rounding up fLeft and fTop; and discarding the fractional portion
+        of fRight and fBottom, using
+        (SkScalarCeilToInt(fLeft), SkScalarCeilToInt(fTop),
+         SkScalarFloorToInt(fRight), SkScalarFloorToInt(fBottom)).
+
+        @return  rounded SkIRect
+    */
+    SkIRect roundIn() const {
+        SkIRect ir;
+        this->roundIn(&ir);
         return ir;
     }
 

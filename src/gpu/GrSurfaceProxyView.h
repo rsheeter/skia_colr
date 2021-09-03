@@ -45,6 +45,13 @@ public:
     int height() const { return this->proxy()->height(); }
     SkISize dimensions() const { return this->proxy()->dimensions(); }
 
+    GrMipmapped mipmapped() const {
+        if (const GrTextureProxy* proxy = this->asTextureProxy()) {
+            return proxy->mipmapped();
+        }
+        return GrMipmapped::kNo;
+    }
+
     GrSurfaceProxy* proxy() const { return fProxy.get(); }
     sk_sp<GrSurfaceProxy> refProxy() const { return fProxy; }
 
@@ -72,6 +79,16 @@ public:
     GrSurfaceOrigin origin() const { return fOrigin; }
     GrSwizzle swizzle() const { return fSwizzle; }
 
+    void concatSwizzle(GrSwizzle swizzle) { fSwizzle = GrSwizzle::Concat(fSwizzle, swizzle); }
+
+    GrSurfaceProxyView makeSwizzle(GrSwizzle swizzle) const & {
+        return {fProxy, fOrigin, GrSwizzle::Concat(fSwizzle, swizzle)};
+    }
+
+    GrSurfaceProxyView makeSwizzle(GrSwizzle swizzle) && {
+        return {std::move(fProxy), fOrigin, GrSwizzle::Concat(fSwizzle, swizzle)};
+    }
+
     void reset() {
         *this = {};
     }
@@ -84,9 +101,27 @@ public:
                                    SkIRect srcRect,
                                    SkBackingFit fit,
                                    SkBudgeted budgeted) {
-        auto origin = src.origin();
-        auto* proxy = src.proxy();
-        auto copy = GrSurfaceProxy::Copy(context, proxy, origin, mipMapped, srcRect, fit, budgeted);
+        auto copy = GrSurfaceProxy::Copy(context,
+                                         src.refProxy(),
+                                         src.origin(),
+                                         mipMapped,
+                                         srcRect,
+                                         fit,
+                                         budgeted);
+        return {std::move(copy), src.origin(), src.swizzle()};
+    }
+
+    static GrSurfaceProxyView Copy(GrRecordingContext* rContext,
+                                   GrSurfaceProxyView src,
+                                   GrMipmapped mipMapped,
+                                   SkBackingFit fit,
+                                   SkBudgeted budgeted) {
+        auto copy = GrSurfaceProxy::Copy(rContext,
+                                         src.refProxy(),
+                                         src.origin(),
+                                         mipMapped,
+                                         fit,
+                                         budgeted);
         return {std::move(copy), src.origin(), src.swizzle()};
     }
 

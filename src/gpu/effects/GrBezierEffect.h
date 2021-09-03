@@ -69,33 +69,28 @@ public:
             return nullptr;
         }
 
-        return arena->make<GrConicEffect>(color, viewMatrix, coverage, localMatrix,
-                                          usesLocalCoords);
+        return arena->make([&](void* ptr) {
+            return new (ptr) GrConicEffect(color, viewMatrix, coverage, localMatrix,
+                                           usesLocalCoords);
+        });
     }
 
     ~GrConicEffect() override;
 
     const char* name() const override { return "Conic"; }
 
-    inline const Attribute& inPosition() const { return kAttributes[0]; }
-    inline const Attribute& inConicCoeffs() const { return kAttributes[1]; }
-    inline bool isAntiAliased() const { return true; }
-    inline bool isFilled() const { return false; }
-    const SkPMColor4f& color() const { return fColor; }
-    const SkMatrix& viewMatrix() const { return fViewMatrix; }
-    const SkMatrix& localMatrix() const { return fLocalMatrix; }
-    bool usesLocalCoords() const { return fUsesLocalCoords; }
-    uint8_t coverageScale() const { return fCoverageScale; }
+    void addToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override;
 
-    void getGLSLProcessorKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override;
-
-    GrGLSLPrimitiveProcessor* createGLSLInstance(const GrShaderCaps&) const override;
+    std::unique_ptr<ProgramImpl> makeProgramImpl(const GrShaderCaps&) const override;
 
 private:
-    friend class ::SkArenaAlloc; // for access to ctor
+    class Impl;
 
     GrConicEffect(const SkPMColor4f&, const SkMatrix& viewMatrix, uint8_t coverage,
                   const SkMatrix& localMatrix, bool usesLocalCoords);
+
+    inline const Attribute& inPosition() const { return kAttributes[0]; }
+    inline const Attribute& inConicCoeffs() const { return kAttributes[1]; }
 
     SkPMColor4f         fColor;
     SkMatrix            fViewMatrix;
@@ -136,32 +131,28 @@ public:
             return nullptr;
         }
 
-        return arena->make<GrQuadEffect>(color, viewMatrix, coverage, localMatrix, usesLocalCoords);
+        return arena->make([&](void* ptr) {
+            return new (ptr) GrQuadEffect(color, viewMatrix, coverage, localMatrix,
+                                          usesLocalCoords);
+        });
     }
 
     ~GrQuadEffect() override;
 
     const char* name() const override { return "Quad"; }
 
-    inline const Attribute& inPosition() const { return kAttributes[0]; }
-    inline const Attribute& inHairQuadEdge() const { return kAttributes[1]; }
-    inline bool isAntiAliased() const { return true; }
-    inline bool isFilled() const { return false; }
-    const SkPMColor4f& color() const { return fColor; }
-    const SkMatrix& viewMatrix() const { return fViewMatrix; }
-    const SkMatrix& localMatrix() const { return fLocalMatrix; }
-    bool usesLocalCoords() const { return fUsesLocalCoords; }
-    uint8_t coverageScale() const { return fCoverageScale; }
+    void addToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override;
 
-    void getGLSLProcessorKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override;
-
-    GrGLSLPrimitiveProcessor* createGLSLInstance(const GrShaderCaps&) const override;
+    std::unique_ptr<ProgramImpl> makeProgramImpl(const GrShaderCaps&) const override;
 
 private:
-    friend class ::SkArenaAlloc; // for access to ctor
+    class Impl;
 
     GrQuadEffect(const SkPMColor4f&, const SkMatrix& viewMatrix, uint8_t coverage,
                  const SkMatrix& localMatrix, bool usesLocalCoords);
+
+    inline const Attribute& inPosition() const { return kAttributes[0]; }
+    inline const Attribute& inHairQuadEdge() const { return kAttributes[1]; }
 
     SkPMColor4f fColor;
     SkMatrix fViewMatrix;

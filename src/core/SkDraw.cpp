@@ -7,6 +7,7 @@
 
 #include "src/core/SkDraw.h"
 
+#include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkMatrix.h"
 #include "include/core/SkPaint.h"
@@ -27,9 +28,11 @@
 #include "src/core/SkDrawProcs.h"
 #include "src/core/SkMaskFilterBase.h"
 #include "src/core/SkMatrixUtils.h"
+#include "src/core/SkPathEffectBase.h"
 #include "src/core/SkPathPriv.h"
 #include "src/core/SkRasterClip.h"
 #include "src/core/SkRectPriv.h"
+#include "src/core/SkSamplingPriv.h"
 #include "src/core/SkScan.h"
 #include "src/core/SkStroke.h"
 #include "src/core/SkTLazy.h"
@@ -37,11 +40,12 @@
 
 #include <utility>
 
-static SkPaint make_paint_with_image(
-    const SkPaint& origPaint, const SkBitmap& bitmap, SkMatrix* matrix = nullptr) {
+static SkPaint make_paint_with_image(const SkPaint& origPaint, const SkBitmap& bitmap,
+                                     const SkSamplingOptions& sampling,
+                                     SkMatrix* matrix = nullptr) {
     SkPaint paint(origPaint);
     paint.setShader(SkMakeBitmapShaderForPaint(origPaint, bitmap, SkTileMode::kClamp,
-                                               SkTileMode::kClamp, matrix,
+                                               SkTileMode::kClamp, sampling, matrix,
                                                kNever_SkCopyPixelsMode));
     return paint;
 }
@@ -433,14 +437,15 @@ void SkDraw::drawPoints(SkCanvas::PointMode mode, size_t count,
                 if (2 == count && paint.getPathEffect()) {
                     // most likely a dashed line - see if it is one of the ones
                     // we can accelerate
-                    SkStrokeRec rec(paint);
-                    SkPathEffect::PointData pointData;
+                    SkStrokeRec stroke(paint);
+                    SkPathEffectBase::PointData pointData;
 
                     SkPath path = SkPath::Line(pts[0], pts[1]);
 
                     SkRect cullRect = SkRect::Make(fRC->getBounds());
 
-                    if (paint.getPathEffect()->asPoints(&pointData, path, rec, ctm, &cullRect)) {
+                    if (as_PEB(paint.getPathEffect())->asPoints(&pointData, path, stroke, ctm,
+                                                                &cullRect)) {
                         // 'asPoints' managed to find some fast path
 
                         SkPaint newP(paint);
@@ -467,7 +472,7 @@ void SkDraw::drawPoints(SkCanvas::PointMode mode, size_t count,
                             // The rest of the dashed line can just be drawn as points
                             SkASSERT(pointData.fSize.fX == SkScalarHalf(newP.getStrokeWidth()));
 
-                            if (SkPathEffect::PointData::kCircles_PointFlag & pointData.fFlags) {
+                            if (SkPathEffectBase::PointData::kCircles_PointFlag & pointData.fFlags) {
                                 newP.setStrokeCap(SkPaint::kRound_Cap);
                             } else {
                                 newP.setStrokeCap(SkPaint::kButt_Cap);
@@ -488,7 +493,7 @@ void SkDraw::drawPoints(SkCanvas::PointMode mode, size_t count,
                             break;
                         } else {
                             // The rest of the dashed line must be drawn as rects
-                            SkASSERT(!(SkPathEffect::PointData::kCircles_PointFlag &
+                            SkASSERT(!(SkPathEffectBase::PointData::kCircles_PointFlag &
                                       pointData.fFlags));
 
                             SkRect r;
@@ -543,9 +548,9 @@ static inline SkPoint compute_stroke_size(const SkPaint& paint, const SkMatrix& 
     return SkPoint::Make(SkScalarAbs(size.fX), SkScalarAbs(size.fY));
 }
 
-static bool easy_rect_join(const SkPaint& paint, const SkMatrix& matrix,
+static bool easy_rect_join(const SkRect& rect, const SkPaint& paint, const SkMatrix& matrix,
                            SkPoint* strokeSize) {
-    if (SkPaint::kMiter_Join != paint.getStrokeJoin() ||
+    if (rect.isEmpty() || SkPaint::kMiter_Join != paint.getStrokeJoin() ||
         paint.getStrokeMiter() < SK_ScalarSqrt2) {
         return false;
     }
@@ -554,7 +559,8 @@ static bool easy_rect_join(const SkPaint& paint, const SkMatrix& matrix,
     return true;
 }
 
-SkDraw::RectType SkDraw::ComputeRectType(const SkPaint& paint,
+SkDraw::RectType SkDraw::ComputeRectType(const SkRect& rect,
+                                         const SkPaint& paint,
                                          const SkMatrix& matrix,
                                          SkPoint* strokeSize) {
     RectType rtype;
@@ -573,7 +579,7 @@ SkDraw::RectType SkDraw::ComputeRectType(const SkPaint& paint,
         rtype = kFill_RectType;
     } else if (zeroWidth) {
         rtype = kHair_RectType;
-    } else if (easy_rect_join(paint, matrix, strokeSize)) {
+    } else if (easy_rect_join(rect, paint, matrix, strokeSize)) {
         rtype = kStroke_RectType;
     } else {
         rtype = kPath_RectType;
@@ -619,7 +625,7 @@ void SkDraw::drawRect(const SkRect& prePaintRect, const SkPaint& paint,
 
     SkMatrix ctm = fMatrixProvider->localToDevice();
     SkPoint strokeSize;
-    RectType rtype = ComputeRectType(paint, ctm, &strokeSize);
+    RectType rtype = ComputeRectType(prePaintRect, paint, ctm, &strokeSize);
 
     if (kPath_RectType == rtype) {
         draw_rect_as_path(*this, prePaintRect, paint, matrixProvider);
@@ -799,19 +805,6 @@ DRAW_PATH:
     this->drawPath(path, paint, nullptr, true);
 }
 
-SkScalar SkDraw::ComputeResScaleForStroking(const SkMatrix& matrix) {
-    // Not sure how to handle perspective differently, so we just don't try (yet)
-    SkScalar sx = SkPoint::Length(matrix[SkMatrix::kMScaleX], matrix[SkMatrix::kMSkewY]);
-    SkScalar sy = SkPoint::Length(matrix[SkMatrix::kMSkewX],  matrix[SkMatrix::kMScaleY]);
-    if (SkScalarsAreFinite(sx, sy)) {
-        SkScalar scale = std::max(sx, sy);
-        if (scale > 0) {
-            return scale;
-        }
-    }
-    return 1;
-}
-
 void SkDraw::drawDevPath(const SkPath& devPath, const SkPaint& paint, bool drawCoverage,
                          SkBlitter* customBlitter, bool doFill) const {
     if (SkPathPriv::TooBigForMath(devPath)) {
@@ -827,14 +820,14 @@ void SkDraw::drawDevPath(const SkPath& devPath, const SkPaint& paint, bool drawC
 
     if (paint.getMaskFilter()) {
         SkStrokeRec::InitStyle style = doFill ? SkStrokeRec::kFill_InitStyle
-        : SkStrokeRec::kHairline_InitStyle;
+                                              : SkStrokeRec::kHairline_InitStyle;
         if (as_MFB(paint.getMaskFilter())
                     ->filterPath(devPath, fMatrixProvider->localToDevice(), *fRC, blitter, style)) {
             return;  // filterPath() called the blitter, so we're done
         }
     }
 
-    void (*proc)(const SkPathView&, const SkRasterClip&, SkBlitter*);
+    void (*proc)(const SkPath&, const SkRasterClip&, SkBlitter*);
     if (doFill) {
         if (paint.isAntiAlias()) {
             proc = SkScan::AntiFillPath;
@@ -875,7 +868,7 @@ void SkDraw::drawDevPath(const SkPath& devPath, const SkPaint& paint, bool drawC
         }
     }
 
-    proc(devPath.view(), *fRC, blitter);
+    proc(devPath, *fRC, blitter);
 }
 
 void SkDraw::drawPath(const SkPath& origSrcPath, const SkPaint& origPaint,
@@ -910,17 +903,16 @@ void SkDraw::drawPath(const SkPath& origSrcPath, const SkPaint& origPaint,
             matrixProvider = preConcatMatrixProvider.init(*matrixProvider, *prePathMatrix);
         }
     }
-    // at this point we're done with prePathMatrix
-    SkDEBUGCODE(prePathMatrix = (const SkMatrix*)0x50FF8001;)
 
     SkTCopyOnFirstWrite<SkPaint> paint(origPaint);
 
     {
         SkScalar coverage;
         if (SkDrawTreatAsHairline(origPaint, matrixProvider->localToDevice(), &coverage)) {
+            const auto bm = origPaint.asBlendMode();
             if (SK_Scalar1 == coverage) {
                 paint.writable()->setStrokeWidth(0);
-            } else if (SkBlendMode_SupportsCoverageAsAlpha(origPaint.getBlendMode())) {
+            } else if (bm && SkBlendMode_SupportsCoverageAsAlpha(bm.value())) {
                 U8CPU newAlpha;
 #if 0
                 newAlpha = SkToU8(SkScalarRoundToInt(coverage *
@@ -946,7 +938,7 @@ void SkDraw::drawPath(const SkPath& origSrcPath, const SkPaint& origPaint,
             cullRectPtr = &cullRect;
         }
         doFill = paint->getFillPath(*pathPtr, tmpPath, cullRectPtr,
-                                    ComputeResScaleForStroking(fMatrixProvider->localToDevice()));
+                                    fMatrixProvider->localToDevice());
         pathPtr = tmpPath;
     }
 
@@ -965,7 +957,8 @@ void SkDraw::drawPath(const SkPath& origSrcPath, const SkPaint& origPaint,
     this->drawDevPath(*devPathPtr, *paint, drawCoverage, customBlitter, doFill);
 }
 
-void SkDraw::drawBitmapAsMask(const SkBitmap& bitmap, const SkPaint& paint) const {
+void SkDraw::drawBitmapAsMask(const SkBitmap& bitmap, const SkSamplingOptions& sampling,
+                              const SkPaint& paint) const {
     SkASSERT(bitmap.colorType() == kAlpha_8_SkColorType);
 
     // nothing to draw
@@ -974,7 +967,8 @@ void SkDraw::drawBitmapAsMask(const SkBitmap& bitmap, const SkPaint& paint) cons
     }
 
     SkMatrix ctm = fMatrixProvider->localToDevice();
-    if (SkTreatAsSprite(ctm, bitmap.dimensions(), paint)) {
+    if (SkTreatAsSprite(ctm, bitmap.dimensions(), sampling, paint))
+    {
         int ix = SkScalarRoundToInt(ctm.getTranslateX());
         int iy = SkScalarRoundToInt(ctm.getTranslateY());
 
@@ -1040,8 +1034,7 @@ void SkDraw::drawBitmapAsMask(const SkBitmap& bitmap, const SkPaint& paint) cons
             SkPaint tmpPaint;
             tmpPaint.setAntiAlias(paint.isAntiAlias());
             tmpPaint.setDither(paint.isDither());
-            tmpPaint.setFilterQuality(paint.getFilterQuality());
-            SkPaint paintWithShader = make_paint_with_image(tmpPaint, bitmap);
+            SkPaint paintWithShader = make_paint_with_image(tmpPaint, bitmap, sampling);
             SkRect rr;
             rr.setIWH(bitmap.width(), bitmap.height());
             c.drawRect(rr, paintWithShader);
@@ -1065,11 +1058,12 @@ static bool clipped_out(const SkMatrix& matrix, const SkRasterClip& clip,
 }
 
 static bool clipHandlesSprite(const SkRasterClip& clip, int x, int y, const SkPixmap& pmap) {
-    return clip.isBW() || clip.quickContains(x, y, x + pmap.width(), y + pmap.height());
+    return clip.isBW() || clip.quickContains(SkIRect::MakeXYWH(x, y, pmap.width(), pmap.height()));
 }
 
 void SkDraw::drawBitmap(const SkBitmap& bitmap, const SkMatrix& prematrix,
-                        const SkRect* dstBounds, const SkPaint& origPaint) const {
+                        const SkRect* dstBounds, const SkSamplingOptions& sampling,
+                        const SkPaint& origPaint) const {
     SkDEBUGCODE(this->validate();)
 
     // nothing to draw
@@ -1092,7 +1086,7 @@ void SkDraw::drawBitmap(const SkBitmap& bitmap, const SkMatrix& prematrix,
     }
 
     if (bitmap.colorType() != kAlpha_8_SkColorType
-        && SkTreatAsSprite(matrix, bitmap.dimensions(), *paint)) {
+        && SkTreatAsSprite(matrix, bitmap.dimensions(), sampling, *paint)) {
         //
         // It is safe to call lock pixels now, since we know the matrix is
         // (more or less) identity.
@@ -1123,9 +1117,9 @@ void SkDraw::drawBitmap(const SkBitmap& bitmap, const SkMatrix& prematrix,
     draw.fMatrixProvider = &matrixProvider;
 
     if (bitmap.colorType() == kAlpha_8_SkColorType && !paint->getColorFilter()) {
-        draw.drawBitmapAsMask(bitmap, *paint);
+        draw.drawBitmapAsMask(bitmap, sampling, *paint);
     } else {
-        SkPaint paintWithShader = make_paint_with_image(*paint, bitmap);
+        SkPaint paintWithShader = make_paint_with_image(*paint, bitmap, sampling);
         const SkRect srcBounds = SkRect::MakeIWH(bitmap.width(), bitmap.height());
         if (dstBounds) {
             this->drawRect(srcBounds, paintWithShader, &prematrix, dstBounds);
@@ -1178,7 +1172,7 @@ void SkDraw::drawSprite(const SkBitmap& bitmap, int x, int y, const SkPaint& ori
 
     // create shader with offset
     matrix.setTranslate(r.fLeft, r.fTop);
-    SkPaint paintWithShader = make_paint_with_image(paint, bitmap, &matrix);
+    SkPaint paintWithShader = make_paint_with_image(paint, bitmap, SkSamplingOptions(), &matrix);
     SkDraw draw(*this);
     SkOverrideDeviceMatrixProvider matrixProvider(*fMatrixProvider, SkMatrix::I());
     draw.fMatrixProvider = &matrixProvider;

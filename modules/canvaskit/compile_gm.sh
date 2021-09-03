@@ -25,12 +25,23 @@ EMCC=`which emcc`
 EMCXX=`which em++`
 EMAR=`which emar`
 
-RELEASE_CONF="-O3 -DSK_RELEASE --pre-js $BASE_DIR/release.js \
-              -DGR_GL_CHECK_ALLOC_WITH_GET_ERROR=0 -DGR_TEST_UTILS"
-EXTRA_CFLAGS="\"-DSK_RELEASE\", \"-DGR_GL_CHECK_ALLOC_WITH_GET_ERROR=0\", \"-DGR_TEST_UTILS\", "
-IS_OFFICIAL_BUILD="false"
+if [[ $@ == *debug* ]]; then
+  echo "Building a Debug build"
+  DEBUG=true
+  EXTRA_CFLAGS="\"-DSK_DEBUG\", \"-DGR_TEST_UTILS\", "
+  RELEASE_CONF="-O1 --js-opts 0 -s DEMANGLE_SUPPORT=1 -frtti -s ASSERTIONS=1 -s GL_ASSERTIONS=1 -g \
+                -DSK_DEBUG --pre-js $BASE_DIR/debug.js"
+  BUILD_DIR=${BUILD_DIR:="out/wasm_gm_tests_debug"}
+else
+  echo "Building a release build"
+  DEBUG=false
+  BUILD_DIR=${BUILD_DIR:="out/wasm_gm_tests"}
+  RELEASE_CONF="-O3 -DSK_RELEASE --pre-js $BASE_DIR/release.js \
+              -DGR_TEST_UTILS"
+  EXTRA_CFLAGS="\"-DSK_RELEASE\", \"-DGR_TEST_UTILS\", "
+fi
 
-BUILD_DIR=${BUILD_DIR:="out/wasm_gm_tests"}
+IS_OFFICIAL_BUILD="false"
 
 mkdir -p $BUILD_DIR
 # sometimes the .a files keep old symbols around - cleaning them out makes sure
@@ -57,13 +68,6 @@ GN_FONT+="skia_enable_fontmgr_custom_embedded=true skia_enable_fontmgr_custom_em
 
 
 GN_SHAPER="skia_use_icu=true skia_use_system_icu=false skia_use_harfbuzz=true skia_use_system_harfbuzz=false"
-#SHAPER_LIB="$BUILD_DIR/libharfbuzz.a $BUILD_DIR/libicu.a"
-SHAPER_LIB=""
-
-DO_DECODE="true"
-ENCODE_PNG="true"
-ENCODE_JPEG="false"
-ENCODE_WEBP="false"
 
 # Turn off exiting while we check for ninja (which may not be on PATH)
 set +e
@@ -79,10 +83,6 @@ set -e
 
 echo "Compiling bitcode"
 
-# With emsdk 2.0.0 we get a false positive on tautological-value-range-compare. This appears to be
-# fixed in the emsdk 2.0.4 toolchain. Disable the warning while we maintain support for 2.0.0.
-EXTRA_CFLAGS+="\"-Wno-tautological-value-range-compare\","
-
 # Inspired by https://github.com/Zubnix/skia-wasm-port/blob/master/build_bindings.sh
 ./bin/gn gen ${BUILD_DIR} \
   --args="cc=\"${EMCC}\" \
@@ -95,7 +95,7 @@ EXTRA_CFLAGS+="\"-Wno-tautological-value-range-compare\","
     ${GN_GPU_FLAGS}
     ${EXTRA_CFLAGS}
   ] \
-  is_debug=false \
+  is_debug=${DEBUG} \
   is_official_build=${IS_OFFICIAL_BUILD} \
   is_component_build=false \
   werror=true \
@@ -106,15 +106,15 @@ EXTRA_CFLAGS+="\"-Wno-tautological-value-range-compare\","
   skia_use_webgl=true \
   skia_use_fontconfig=false \
   skia_use_freetype=true \
-  skia_use_libheif=false \
-  skia_use_libjpeg_turbo_decode=${DO_DECODE} \
-  skia_use_libjpeg_turbo_encode=${ENCODE_JPEG} \
-  skia_use_libpng_decode=${DO_DECODE} \
-  skia_use_libpng_encode=${ENCODE_PNG} \
-  skia_use_libwebp_decode=${DO_DECODE} \
-  skia_use_libwebp_encode=${ENCODE_WEBP} \
+  skia_use_libheif=true \
+  skia_use_libjpeg_turbo_decode=true \
+  skia_use_libjpeg_turbo_encode=true \
+  skia_use_libpng_decode=true \
+  skia_use_libpng_encode=true \
+  skia_use_libwebp_decode=true \
+  skia_use_libwebp_encode=true \
   skia_use_lua=false \
-  skia_use_piex=false \
+  skia_use_piex=true \
   skia_use_system_freetype2=false \
   skia_use_system_libjpeg_turbo=false \
   skia_use_system_libpng=false \
@@ -127,11 +127,10 @@ EXTRA_CFLAGS+="\"-Wno-tautological-value-range-compare\","
   ${GN_SHAPER} \
   ${GN_GPU} \
   ${GN_FONT} \
-  skia_use_expat=false \
-  skia_enable_ccpr=false \
-  \
+  skia_use_expat=true \
+  skia_enable_skgpu_v2=false \
+  skia_enable_svg=true \
   skia_enable_skshaper=true \
-  skia_enable_nvpr=false \
   skia_enable_skparagraph=true \
   skia_enable_pdf=false"
 
@@ -141,10 +140,27 @@ parse_targets() {
     basename $LIBPATH
   done
 }
-${NINJA} -C ${BUILD_DIR} libskia.a libskshaper.a \
-  $(parse_targets $SHAPER_LIB $GM_LIB)
+${NINJA} -C ${BUILD_DIR} libskia.a libskshaper.a libskunicode.a \
+  $(parse_targets $GM_LIB)
 
 echo "Generating final wasm"
+
+# Defines for the emscripten compilation step, which builds the tests
+# Aim to match the defines that would be set by gn for the skia compilation step.
+SKIA_DEFINES="
+-DSK_DISABLE_AAA \
+-DSK_FORCE_8_BYTE_ALIGNMENT \
+-DSK_HAS_WUFFS_LIBRARY \
+-DSK_HAS_HEIF_LIBRARY \
+-DSK_ENCODE_WEBP \
+-DSK_CODEC_DECODES_WEBP \
+-DSK_ENCODE_PNG \
+-DSK_CODEC_DECODES_PNG \
+-DSK_ENCODE_JPEG \
+-DSK_CODEC_DECODES_JPEG \
+-DSK_SHAPER_HARFBUZZ_AVAILABLE \
+-DSK_UNICODE_AVAILABLE \
+-DSK_ENABLE_SVG"
 
 # Disable '-s STRICT=1' outside of Linux until
 # https://github.com/emscripten-core/emscripten/issues/12118 is resovled.
@@ -154,35 +170,80 @@ if [[ `uname` != "Linux" ]]; then
   STRICTNESS=""
 fi
 
+GMS_TO_BUILD="gm/*.cpp"
+TESTS_TO_BUILD="tests/*.cpp"
+
+# When developing locally, it can be faster to focus only on the gms or tests you care about
+# (since they all have to be recompiled/relinked) every time. To do so, mark the following as true
+if false; then
+   GMS_TO_BUILD="gm/gm.cpp"
+   TESTS_TO_BUILD="tests/BulkRectTest.cpp tests/Test.cpp"
+fi
+
+# These gms do not compile or link with the WASM code. Thus, we omit them.
+GLOBIGNORE="gm/cgms.cpp:"\
+"gm/compressed_textures.cpp:"\
+"gm/fiddle.cpp:"\
+"gm/particles.cpp:"\
+"gm/xform.cpp:"\
+"gm/video_decoder.cpp:"
+
+# These tests do not compile with the WASM code (require other deps).
+GLOBIGNORE+="tests/CodecTest.cpp:"\
+"tests/ColorSpaceTest.cpp:"\
+"tests/DrawOpAtlasTest.cpp:"\
+"tests/EncodeTest.cpp:"\
+"tests/FontMgrAndroidParserTest.cpp:"\
+"tests/FontMgrFontConfigTest.cpp:"\
+"tests/TypefaceMacTest.cpp:"\
+"tests/SkVMTest.cpp:"
+
+# These tests do complex things with TestContexts, which is not easily supported for the WASM
+# test harness. Thus we omit them.
+GLOBIGNORE+="tests/BackendAllocationTest.cpp:"\
+"tests/EGLImageTest.cpp:"\
+"tests/ImageTest.cpp:"\
+"tests/SurfaceSemaphoreTest.cpp:"\
+"tests/TextureBindingsResetTest.cpp:"\
+"tests/VkHardwareBufferTest.cpp:"
+
+# All the tests in these files crash.
+GLOBIGNORE+="tests/GrThreadSafeCacheTest.cpp"
+
 # Emscripten prefers that the .a files go last in order, otherwise, it
 # may drop symbols that it incorrectly thinks aren't used. One day,
 # Emscripten will use LLD, which may relax this requirement.
 EMCC_DEBUG=1 ${EMCXX} \
     $RELEASE_CONF \
     -I. \
-    -DSK_DISABLE_AAA \
-    -DSK_FORCE_8_BYTE_ALIGNMENT \
+    -DGR_TEST_UTILS \
+    $SKIA_DEFINES \
     $WASM_GPU \
     -std=c++17 \
+    --profiling-funcs \
+    --profiling \
     --bind \
     --no-entry \
     --pre-js $BASE_DIR/gm.js \
+    tools/Resources.cpp \
     $BASE_DIR/gm_bindings.cpp \
-    gm/bleed.cpp \
-    gm/gm.cpp \
+    $GMS_TO_BUILD \
+    $TESTS_TO_BUILD \
     $GM_LIB \
     $BUILD_DIR/libskshaper.a \
-    $SHAPER_LIB \
+    $BUILD_DIR/libskunicode.a \
+    $BUILD_DIR/libsvg.a \
     $BUILD_DIR/libskia.a \
     $BUILTIN_FONT \
     -s LLD_REPORT_UNDEFINED \
     -s ALLOW_MEMORY_GROWTH=1 \
     -s EXPORT_NAME="InitWasmGMTests" \
-    -s FORCE_FILESYSTEM=0 \
-    -s FILESYSTEM=0 \
+    -s EXPORTED_FUNCTIONS=['_malloc','_free'] \
+    -s FORCE_FILESYSTEM=1 \
+    -s FILESYSTEM=1 \
     -s MODULARIZE=1 \
     -s NO_EXIT_RUNTIME=1 \
-    -s INITIAL_MEMORY=128MB \
+    -s INITIAL_MEMORY=256MB \
     -s WASM=1 \
     $STRICTNESS \
     -o $BUILD_DIR/wasm_gm_tests.js

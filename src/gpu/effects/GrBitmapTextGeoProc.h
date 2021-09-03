@@ -35,36 +35,30 @@ public:
                                      GrMaskFormat format,
                                      const SkMatrix& localMatrix,
                                      bool usesW) {
-        return arena->make<GrBitmapTextGeoProc>(caps, color, wideColor, views, numActiveViews,
-                                                p, format, localMatrix, usesW);
+        return arena->make([&](void* ptr) {
+            return new (ptr) GrBitmapTextGeoProc(caps, color, wideColor, views, numActiveViews,
+                                                 p, format, localMatrix, usesW);
+        });
     }
 
     ~GrBitmapTextGeoProc() override {}
 
-    const char* name() const override { return "Texture"; }
-
-    const Attribute& inPosition() const { return fInPosition; }
-    const Attribute& inColor() const { return fInColor; }
-    const Attribute& inTextureCoords() const { return fInTextureCoords; }
-    GrMaskFormat maskFormat() const { return fMaskFormat; }
-    const SkPMColor4f& color() const { return fColor; }
-    bool hasVertexColor() const { return fInColor.isInitialized(); }
-    const SkMatrix& localMatrix() const { return fLocalMatrix; }
-    bool usesW() const { return fUsesW; }
-    const SkISize& atlasDimensions() const { return fAtlasDimensions; }
+    const char* name() const override { return "BitmapText"; }
 
     void addNewViews(const GrSurfaceProxyView*, int numActiveViews, GrSamplerState);
 
-    void getGLSLProcessorKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override;
+    void addToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const override;
 
-    GrGLSLPrimitiveProcessor* createGLSLInstance(const GrShaderCaps& caps) const override;
+    std::unique_ptr<ProgramImpl> makeProgramImpl(const GrShaderCaps& caps) const override;
 
 private:
-    friend class ::SkArenaAlloc; // for access to ctor
+    class Impl;
 
     GrBitmapTextGeoProc(const GrShaderCaps&, const SkPMColor4f&, bool wideColor,
                         const GrSurfaceProxyView* views, int numViews, GrSamplerState params,
                         GrMaskFormat format, const SkMatrix& localMatrix, bool usesW);
+
+    bool hasVertexColor() const { return fInColor.isInitialized(); }
 
     const TextureSampler& onTextureSampler(int i) const override { return fTextureSamplers[i]; }
 

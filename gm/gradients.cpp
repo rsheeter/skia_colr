@@ -601,8 +601,8 @@ private:
     void onOnceBeforeDraw() override {
         const SkPoint center = { 0, 0 };
         const SkScalar kRadius = 3000;
-        const SkColor gColors[] = { 0xFFFFFFFF, 0xFF000000 };
-        fShader = SkGradientShader::MakeRadial(center, kRadius, gColors, nullptr, 2,
+        const SkColor kColors[] = { 0xFFFFFFFF, 0xFF000000 };
+        fShader = SkGradientShader::MakeRadial(center, kRadius, kColors, nullptr, 2,
                                                SkTileMode::kClamp);
     }
 
@@ -922,8 +922,8 @@ DEF_SIMPLE_GM(fancy_gradients, canvas, 800, 300) {
         SkMatrix m = SkMatrix::I();
         m.preRotate(45);
         return recorder.finishRecordingAsPicture()->makeShader(
-                                           SkTileMode::kRepeat,
-                                           SkTileMode::kRepeat, &m, nullptr);
+                                           SkTileMode::kRepeat, SkTileMode::kRepeat,
+                                           SkFilterMode::kNearest, &m, nullptr);
     });
 
     draw_circle_shader(canvas, 400, 150, 100, []() -> sk_sp<SkShader> {
@@ -944,7 +944,7 @@ DEF_SIMPLE_GM(fancy_gradients, canvas, 800, 300) {
 
         return recorder.finishRecordingAsPicture()->makeShader(
                                            SkTileMode::kRepeat,
-                                           SkTileMode::kRepeat);
+                                           SkTileMode::kRepeat, SkFilterMode::kNearest);
     });
 
     draw_circle_shader(canvas, 650, 150, 100, []() -> sk_sp<SkShader> {

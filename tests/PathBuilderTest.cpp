@@ -6,6 +6,7 @@
  */
 
 #include "include/core/SkPathBuilder.h"
+#include "include/core/SkPathTypes.h"
 #include "src/core/SkPathPriv.h"
 #include "tests/Test.h"
 
@@ -39,6 +40,22 @@ DEF_TEST(pathbuilder, reporter) {
 
     is_empty(reporter, b.snapshot());
     is_empty(reporter, b.detach());
+}
+
+DEF_TEST(pathbuilder_filltype, reporter) {
+    for (auto fillType : { SkPathFillType::kWinding,
+                           SkPathFillType::kEvenOdd,
+                           SkPathFillType::kInverseWinding,
+                           SkPathFillType::kInverseEvenOdd }) {
+        SkPathBuilder b(fillType);
+
+        REPORTER_ASSERT(reporter, b.fillType() == fillType);
+
+        for (const SkPath& path : { b.snapshot(), b.detach() }) {
+            REPORTER_ASSERT(reporter, path.getFillType() == fillType);
+            is_empty(reporter, path);
+        }
+    }
 }
 
 static bool check_points(const SkPath& path, const SkPoint expected[], size_t count) {
@@ -267,6 +284,74 @@ DEF_TEST(pathbuilder_addPolygon, reporter) {
             auto path0 = SkPathBuilder().addPolygon(pts, i, isClosed).detach();
             auto path1 = addpoly(pts, i, isClosed);
             REPORTER_ASSERT(reporter, path0 == path1);
+        }
+    }
+}
+
+DEF_TEST(pathbuilder_shrinkToFit, reporter) {
+    // SkPathBuilder::snapshot() creates copies of its arrays for perfectly sized paths,
+    // where SkPathBuilder::detach() moves its larger scratch arrays for speed.
+    bool any_smaller = false;
+    for (int pts = 0; pts < 10; pts++) {
+
+        SkPathBuilder b;
+        for (int i = 0; i < pts; i++) {
+            b.lineTo(i,i);
+        }
+        b.close();
+
+        SkPath s = b.snapshot(),
+               d = b.detach();
+        REPORTER_ASSERT(reporter, s.approximateBytesUsed() <= d.approximateBytesUsed());
+        any_smaller |=            s.approximateBytesUsed() <  d.approximateBytesUsed();
+    }
+    REPORTER_ASSERT(reporter, any_smaller);
+}
+
+DEF_TEST(pathbuilder_addPath, reporter) {
+    const auto p = SkPath()
+        .moveTo(10, 10)
+        .lineTo(100, 10)
+        .quadTo(200, 100, 100, 200)
+        .close()
+        .moveTo(200, 200)
+        .cubicTo(210, 200, 210, 300, 200, 300)
+        .conicTo(150, 250, 100, 200, 1.4f);
+
+    REPORTER_ASSERT(reporter, p == SkPathBuilder().addPath(p).detach());
+}
+
+/*
+ *  If paths were immutable, we would not have to track this, but until that day, we need
+ *  to ensure that paths are built correctly/consistently with this field, regardless of
+ *  either the classic mutable apis, or via SkPathBuilder (SkPath::Polygon uses builder).
+ */
+DEF_TEST(pathbuilder_lastmoveindex, reporter) {
+    const SkPoint pts[] = {
+        {0, 1}, {2, 3}, {4, 5},
+    };
+    constexpr int N = (int)SK_ARRAY_COUNT(pts);
+
+    for (int ctrCount = 1; ctrCount < 4; ++ctrCount) {
+        const int lastMoveToIndex = (ctrCount - 1) * N;
+
+        for (bool isClosed : {false, true}) {
+            SkPath a, b;
+
+            SkPathBuilder builder;
+            for (int i = 0; i < ctrCount; ++i) {
+                builder.addPolygon(pts, N, isClosed);  // new-school way
+                b.addPoly(pts, N, isClosed);        // old-school way
+            }
+            a = builder.detach();
+
+            // We track the last moveTo verb index, and we invert it if the last verb was a close
+            const int expected = isClosed ? ~lastMoveToIndex : lastMoveToIndex;
+            const int a_last = SkPathPriv::LastMoveToIndex(a);
+            const int b_last = SkPathPriv::LastMoveToIndex(b);
+
+            REPORTER_ASSERT(reporter, a_last == expected);
+            REPORTER_ASSERT(reporter, b_last == expected);
         }
     }
 }

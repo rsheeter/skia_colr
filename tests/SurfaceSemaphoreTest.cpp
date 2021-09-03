@@ -5,13 +5,14 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrBackendSemaphore.h"
 #include "include/gpu/GrBackendSurface.h"
 #include "include/gpu/GrDirectContext.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "tests/Test.h"
 #include "tools/gpu/GrContextFactory.h"
 
@@ -166,8 +167,8 @@ void surface_semaphore_test(skiatest::Reporter* reporter,
     }
     mainCtx->submit();
 
-    sk_sp<SkImage> mainImage = mainSurface->makeImageSnapshot();
-    GrBackendTexture backendTexture = mainImage->getBackendTexture(false);
+    GrBackendTexture backendTexture = mainSurface->getBackendTexture(
+            SkSurface::BackendHandleAccess::kFlushRead_BackendHandleAccess);
 
     draw_child(reporter, childInfo1, backendTexture, semaphores[0]);
 

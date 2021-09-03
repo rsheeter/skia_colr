@@ -34,10 +34,8 @@ describe('Core canvas behavior', () => {
 
         canvas.drawPicture(pic);
 
-        // test that file saving functionality throws no errors
-        // Unfortunately jasmine spy objects can't fake their type so we can't verify it downloads
-        // a nonzero sized file.
-        pic.saveAsFile('foo.skp');
+        const bytes = pic.serialize();
+        expect(bytes).toBeTruthy();
 
         pic.delete();
     });
@@ -49,7 +47,7 @@ describe('Core canvas behavior', () => {
          (c >>  0) & 0xFF,
         ((c >> 24) & 0xFF) / 255
       );
-    }
+    };
 
     it('can compute tonal colors', () => {
         const input = {
@@ -146,13 +144,22 @@ describe('Core canvas behavior', () => {
                     width: img.width(),
                     height: img.height(),
                 };
+                const rowBytes = 4 * img.width();
 
-                const pixels = img.readPixels(imageInfo, 0, 0);
+                const pixels = img.readPixels(0, 0, imageInfo);
                 // We know the image is 512 by 512 pixels in size, each pixel
                 // requires 4 bytes (R, G, B, A).
                 expect(pixels.length).toEqual(512 * 512 * 4);
 
+                // Make enough space for a 5x5 8888 surface (4 bytes for R, G, B, A)
+                const rdsData = CanvasKit.Malloc(Uint8Array, 512 * 5*512 * 4);
+                const pixels2 = rdsData.toTypedArray();
+                pixels2[0] = 127;  // sentinel value, should be overwritten by readPixels.
+                img.readPixels(0, 0, imageInfo, rdsData, rowBytes);
+                expect(rdsData.toTypedArray()[0]).toEqual(pixels[0]);
+
                 img.delete();
+                CanvasKit.Free(rdsData);
                 done();
             })();
         });
@@ -166,26 +173,48 @@ describe('Core canvas behavior', () => {
         expect(aImg.height()).toEqual(240);
         expect(aImg.getFrameCount()).toEqual(60);
 
-        let img = aImg.makeImageAtCurrentFrame();
-        canvas.drawImage(img, 0, 0, null);
-        img.delete(); // This is annoying, so we added drawImageAtCurrentFrame
+        const drawCurrentFrame = function(x, y) {
+            let img = aImg.makeImageAtCurrentFrame();
+            canvas.drawImage(img, x, y, null);
+            img.delete();
+        }
+
+        drawCurrentFrame(0, 0);
 
         let c = aImg.decodeNextFrame();
         expect(c).not.toEqual(-1);
-        canvas.drawImageAtCurrentFrame(aImg, 300, 0, null);
+        drawCurrentFrame(300, 0);
         for(let i = 0; i < 10; i++) {
             c = aImg.decodeNextFrame();
             expect(c).not.toEqual(-1);
         }
-        canvas.drawImageAtCurrentFrame(aImg, 0, 300, null);
+        drawCurrentFrame(0, 300);
         for(let i = 0; i < 10; i++) {
             c = aImg.decodeNextFrame();
             expect(c).not.toEqual(-1);
         }
-        canvas.drawImageAtCurrentFrame(aImg, 300, 300, null);
+        drawCurrentFrame(300, 300);
 
         aImg.delete();
     }, '/assets/flightAnim.gif');
+
+    gm('exif_orientation', (canvas, fetchedByteBuffers) => {
+        canvas.clear(CanvasKit.WHITE);
+        const paint = new CanvasKit.Paint();
+        const font = new CanvasKit.Font(null, 14);
+        canvas.drawText('The following heart should be rotated 90 CCW due to exif.',
+            5, 25, paint, font);
+
+        // TODO(kjlubick) it would be nice to also to test MakeAnimatedImageFromEncoded but
+        //   I could not create a sample animated image that worked.
+        const img = CanvasKit.MakeImageFromEncoded(fetchedByteBuffers[0]);
+        expect(img).toBeTruthy();
+        canvas.drawImage(img, 5, 35, null);
+
+        img.delete();
+        paint.delete();
+        font.delete();
+    }, '/assets/exif_rotated_heart.jpg');
 
     gm('1x4_from_scratch', (canvas) => {
         canvas.clear(CanvasKit.WHITE);
@@ -199,9 +228,26 @@ describe('Core canvas behavior', () => {
               0,   0, 255, 255, // opaque blue
             255,   0, 255, 100, // transparent purple
         ]);
-        const img = CanvasKit.MakeImage(pixels, 1, 4, CanvasKit.AlphaType.Unpremul, CanvasKit.ColorType.RGBA_8888,
-            CanvasKit.ColorSpace.SRGB);
+        const img = CanvasKit.MakeImage({
+          'width': 1,
+          'height': 4,
+          'alphaType': CanvasKit.AlphaType.Unpremul,
+          'colorType': CanvasKit.ColorType.RGBA_8888,
+          'colorSpace': CanvasKit.ColorSpace.SRGB
+        }, pixels, 4);
         canvas.drawImage(img, 1, 1, paint);
+
+        const info = img.getImageInfo();
+        expect(info).toEqual({
+          'width': 1,
+          'height': 4,
+          'alphaType': CanvasKit.AlphaType.Unpremul,
+          'colorType': CanvasKit.ColorType.RGBA_8888,
+        });
+        const cs = img.getColorSpace();
+        expect(CanvasKit.ColorSpace.Equals(cs, CanvasKit.ColorSpace.SRGB)).toBeTruthy();
+
+        cs.delete();
         img.delete();
         paint.delete();
     });
@@ -214,34 +260,41 @@ describe('Core canvas behavior', () => {
         const paint = new CanvasKit.Paint();
         paint.setColor(CanvasKit.Color(0, 0, 0, 0.8));
 
-        const srcs = new CanvasKit.RectBuilder();
-        // left top right bottom
-        srcs.push(  0,   0, 256, 256);
-        srcs.push(256,   0, 512, 256);
-        srcs.push(  0, 256, 256, 512);
-        srcs.push(256, 256, 512, 512);
+        // Allocate space for 4 rectangles.
+        const srcs = CanvasKit.Malloc(Float32Array, 16);
+        srcs.toTypedArray().set([
+            0,   0, 256, 256, // LTRB
+          256,   0, 512, 256,
+            0, 256, 256, 512,
+          256, 256, 512, 512
+        ]);
 
-        const dsts = new CanvasKit.RSXFormBuilder();
-        // scos, ssin, tx, ty
-        dsts.push(0.5, 0,  20,  20);
-        dsts.push(0.5, 0, 300,  20);
-        dsts.push(0.5, 0,  20, 300);
-        dsts.push(0.5, 0, 300, 300);
+        // Allocate space for 4 RSXForms.
+        const dsts = CanvasKit.Malloc(Float32Array, 16);
+        dsts.toTypedArray().set([
+            0.5, 0,  20,  20, // scos, ssin, tx, ty
+            0.5, 0, 300,  20,
+            0.5, 0,  20, 300,
+            0.5, 0, 300, 300
+        ]);
 
-        const colors = new CanvasKit.ColorBuilder();
-        // note that the ColorBuilder expects int colors to be pushed.
-        // pushing float colors to it only causes weird problems way downstream.
-        // It does no type checking.
-        colors.push(CanvasKit.ColorAsInt( 85, 170,  10, 128)); // light green
-        colors.push(CanvasKit.ColorAsInt( 51,  51, 191, 128)); // light blue
-        colors.push(CanvasKit.ColorAsInt(  0,   0,   0, 128));
-        colors.push(CanvasKit.ColorAsInt(256, 256, 256, 128));
+        // Allocate space for 4 colors.
+        const colors = new CanvasKit.Malloc(Uint32Array, 4);
+        colors.toTypedArray().set([
+          CanvasKit.ColorAsInt( 85, 170,  10, 128), // light green
+          CanvasKit.ColorAsInt( 51,  51, 191, 128), // light blue
+          CanvasKit.ColorAsInt(  0,   0,   0, 128),
+          CanvasKit.ColorAsInt(256, 256, 256, 128),
+        ]);
 
         canvas.drawAtlas(atlas, srcs, dsts, paint, CanvasKit.BlendMode.Modulate, colors);
 
         atlas.delete();
+        CanvasKit.Free(srcs);
+        CanvasKit.Free(dsts);
+        CanvasKit.Free(colors);
         paint.delete();
-    }, '/assets/mandrill_512.png')
+    }, '/assets/mandrill_512.png');
 
     gm('draw_atlas_with_arrays', (canvas, fetchedByteBuffers) => {
         const atlas = CanvasKit.MakeImageFromEncoded(fetchedByteBuffers[0]);
@@ -252,31 +305,106 @@ describe('Core canvas behavior', () => {
         paint.setColor(CanvasKit.Color(0, 0, 0, 0.8));
 
         const srcs = [
-              0,   0, 256, 256,
-            256,   0, 512, 256,
-              0, 256, 256, 512,
-            256, 256, 512, 512,
+            0, 0,  8,  8,
+            8, 0, 16,  8,
+            0, 8,  8, 16,
+            8, 8, 16, 16,
         ];
 
         const dsts = [
-            0.5, 0,  20,  20,
-            0.5, 0, 300,  20,
-            0.5, 0,  20, 300,
-            0.5, 0, 300, 300,
+            10, 0,   0,   0,
+            10, 0, 100,   0,
+            10, 0,   0, 100,
+            10, 0, 100, 100,
         ];
 
         const colors = Uint32Array.of(
             CanvasKit.ColorAsInt( 85, 170,  10, 128), // light green
             CanvasKit.ColorAsInt( 51,  51, 191, 128), // light blue
             CanvasKit.ColorAsInt(  0,   0,   0, 128),
-            CanvasKit.ColorAsInt(256, 256, 256, 128),
+            CanvasKit.ColorAsInt(255, 255, 255, 128),
         );
 
-        canvas.drawAtlas(atlas, srcs, dsts, paint, CanvasKit.BlendMode.Modulate, colors);
+        // sampling for each of the 4 instances
+        const sampling = [
+            null,
+            {B: 0, C: 0.5},
+            {filter: CanvasKit.FilterMode.Nearest, mipmap: CanvasKit.MipmapMode.None},
+            {filter: CanvasKit.FilterMode.Linear,  mipmap: CanvasKit.MipmapMode.Nearest},
+        ];
+
+        // positioning for each of the 4 instances
+        const offset = [
+            [0, 0], [256, 0], [0, 256], [256, 256]
+        ];
+
+        canvas.translate(20, 20);
+        for (let i = 0; i < 4; ++i) {
+            canvas.save();
+            canvas.translate(offset[i][0], offset[i][1]);
+            canvas.drawAtlas(atlas, srcs, dsts, paint, CanvasKit.BlendMode.SrcOver, colors,
+                             sampling[i]);
+            canvas.restore();
+        }
 
         atlas.delete();
         paint.delete();
-    }, '/assets/mandrill_512.png');
+    }, '/assets/mandrill_16.png');
+
+    gm('draw_patch', (canvas, fetchedByteBuffers) => {
+        const image = CanvasKit.MakeImageFromEncoded(fetchedByteBuffers[0]);
+        expect(image).toBeTruthy();
+        canvas.clear(CanvasKit.WHITE);
+
+        const paint = new CanvasKit.Paint();
+        const shader = image.makeShaderOptions(CanvasKit.TileMode.Clamp,
+                                               CanvasKit.TileMode.Clamp,
+                                               CanvasKit.FilterMode.Linear,
+                                               CanvasKit.MipmapMode.None);
+        const cubics = [0,0, 80,50, 160,50,
+                        240,0, 200,80, 200,160,
+                        240,240, 160,160, 80,240,
+                        0,240, 50,160, 0,80];
+         const colors = [CanvasKit.RED, CanvasKit.BLUE, CanvasKit.YELLOW, CanvasKit.CYAN];
+         const texs = [0,0, 16,0, 16,16, 0,16];
+
+         const params = [
+             [  0,   0, colors, null, null,   null],
+             [256,   0, null,   texs, shader, null],
+             [  0, 256, colors, texs, shader, null],
+             [256, 256, colors, texs, shader, CanvasKit.BlendMode.Screen],
+         ];
+         for (const p of params) {
+             paint.setShader(p[4]);
+             canvas.save();
+             canvas.translate(p[0], p[1]);
+             canvas.drawPatch(cubics, p[2], p[3], p[5], paint);
+             canvas.restore();
+         }
+        paint.delete();
+    }, '/assets/mandrill_16.png');
+
+    gm('draw_glyphs', (canvas, fetchedByteBuffers) => {
+        canvas.clear(CanvasKit.WHITE);
+
+        const paint = new CanvasKit.Paint();
+        const font = new CanvasKit.Font(null, 24);
+        paint.setAntiAlias(true);
+
+        const DIM = 16; // row/col count for the grid
+        const GAP = 32; // spacing between each glyph
+        const glyphs = new Uint16Array(256);
+        const positions = new Float32Array(256*2);
+        for (let i = 0; i < 256; ++i) {
+            glyphs[i] = i;
+            positions[2*i+0] = (i%DIM) * GAP;
+            positions[2*i+1] = Math.round(i/DIM) * GAP;
+        }
+        canvas.drawGlyphs(glyphs, positions, 16, 20, font, paint);
+
+        font.delete();
+        paint.delete();
+    });
 
     gm('image_decoding_methods', async (canvas) => {
         canvas.clear(CanvasKit.WHITE);
@@ -332,15 +460,15 @@ describe('Core canvas behavior', () => {
             const skImage4 = CanvasKit.MakeImageFromCanvasImageSource(image2);
 
             // Draw decoded images
-            const sourceRect = CanvasKit.XYWHRect(0,0, 150, 150);
-            canvas.drawImageRect(skImage1, sourceRect, CanvasKit.XYWHRect(0,row * 100, 90, 90), null, false);
-            canvas.drawImageRect(skImage2, sourceRect, CanvasKit.XYWHRect(100,row * 100, 90, 90), null, false);
-            canvas.drawImageRect(skImage3, sourceRect, CanvasKit.XYWHRect(200,row * 100, 90, 90), null, false);
-            canvas.drawImageRect(skImage4, sourceRect, CanvasKit.XYWHRect(300,row * 100, 90, 90), null, false);
+            const sourceRect = CanvasKit.XYWHRect(0, 0, 150, 150);
+            canvas.drawImageRect(skImage1, sourceRect, CanvasKit.XYWHRect(0, row * 100, 90, 90), null, false);
+            canvas.drawImageRect(skImage2, sourceRect, CanvasKit.XYWHRect(100, row * 100, 90, 90), null, false);
+            canvas.drawImageRect(skImage3, sourceRect, CanvasKit.XYWHRect(200, row * 100, 90, 90), null, false);
+            canvas.drawImageRect(skImage4, sourceRect, CanvasKit.XYWHRect(300, row * 100, 90, 90), null, false);
 
             row++;
         }
-        //Label images with the method used to decode them
+        // Label images with the method used to decode them
         const paint = new CanvasKit.Paint();
         const textFont = new CanvasKit.Font(null, 7);
         canvas.drawText('WASM Decoding', 0, 90, paint, textFont);
@@ -535,7 +663,7 @@ describe('Core canvas behavior', () => {
             [transparentGreen, CanvasKit.BLUE, CanvasKit.RED],
             [0, 0.65, 1.0],
             CanvasKit.TileMode.Mirror,
-            null, // color space
+            null, // no local matrix
         );
         paint.setShader(cgs);
         let r = CanvasKit.LTRBRect(0, 0, 100, 100);
@@ -636,7 +764,8 @@ describe('Core canvas behavior', () => {
 
         // rotate 10 degrees centered on 200, 200
         const m = CanvasKit.Matrix.rotated(Math.PI/18, 200, 200);
-        const rotated = CanvasKit.ImageFilter.MakeMatrixTransform(m, CanvasKit.FilterQuality.Medium, combined);
+        const filtering = { filter: CanvasKit.FilterMode.Linear };
+        const rotated = CanvasKit.ImageFilter.MakeMatrixTransform(m, filtering, combined);
         paint.setImageFilter(rotated);
 
         //canvas.rotate(10, 200, 200);
@@ -668,7 +797,7 @@ describe('Core canvas behavior', () => {
         const combined = CanvasKit.ImageFilter.MakeCompose(redIF, blurIF);
         paint.setImageFilter(combined);
 
-        const frame = img.getCurrentFrame();
+        const frame = img.makeImageAtCurrentFrame();
         canvas.drawImage(frame, 100, 50, paint);
 
         paint.delete();
@@ -680,12 +809,67 @@ describe('Core canvas behavior', () => {
         img.delete();
     }, '/assets/flightAnim.gif');
 
+    gm('drawImageVariants', (canvas, fetchedByteBuffers) => {
+        const img = CanvasKit.MakeImageFromEncoded(fetchedByteBuffers[0]);
+        expect(img).toBeTruthy();
+
+        canvas.clear(CanvasKit.WHITE);
+        canvas.scale(2, 2);
+        const paint = new CanvasKit.Paint();
+        const clipTo = (x, y) => {
+            canvas.save();
+            canvas.clipRect(CanvasKit.XYWHRect(x, y, 128, 128), CanvasKit.ClipOp.Intersect);
+        };
+
+        clipTo(0, 0);
+        canvas.drawImage(img, 0, 0, paint);
+        canvas.restore();
+
+        clipTo(128, 0);
+        canvas.drawImageCubic(img, 128, 0, 1/3, 1/3, null);
+        canvas.restore();
+
+        clipTo(0, 128);
+        canvas.drawImageOptions(img, 0, 128, CanvasKit.FilterMode.Linear, CanvasKit.MipmapMode.None, null);
+        canvas.restore();
+
+        const mipImg = img.makeCopyWithDefaultMipmaps();
+        clipTo(128, 128);
+        canvas.drawImageOptions(mipImg, 128, 128,
+                                CanvasKit.FilterMode.Nearest, CanvasKit.MipmapMode.Nearest, null);
+        canvas.restore();
+
+        paint.delete();
+        mipImg.delete();
+        img.delete();
+    }, '/assets/mandrill_512.png');
+
+    gm('drawImageRectVariants', (canvas, fetchedByteBuffers) => {
+        const img = CanvasKit.MakeImageFromEncoded(fetchedByteBuffers[0]);
+        expect(img).toBeTruthy();
+
+        canvas.clear(CanvasKit.WHITE);
+        const paint = new CanvasKit.Paint();
+        const src = CanvasKit.XYWHRect(100, 100, 128, 128);
+        canvas.drawImageRect(img, src, CanvasKit.XYWHRect(0, 0, 256, 256), paint);
+        canvas.drawImageRectCubic(img, src, CanvasKit.XYWHRect(256, 0, 256, 256), 1/3, 1/3);
+        canvas.drawImageRectOptions(img, src, CanvasKit.XYWHRect(0, 256, 256, 256),
+                                    CanvasKit.FilterMode.Linear, CanvasKit.MipmapMode.None);
+        const mipImg = img.makeCopyWithDefaultMipmaps();
+        canvas.drawImageRectOptions(mipImg, src, CanvasKit.XYWHRect(256, 256, 256, 256),
+                                CanvasKit.FilterMode.Nearest, CanvasKit.MipmapMode.Nearest);
+
+        paint.delete();
+        mipImg.delete();
+        img.delete();
+    }, '/assets/mandrill_512.png');
+
     gm('drawImage_skp', (canvas, fetchedByteBuffers) => {
         const pic = CanvasKit.MakePicture(fetchedByteBuffers[0]);
-        expect(pic).toBeTruthy();
-
         canvas.clear(CanvasKit.TRANSPARENT);
         canvas.drawPicture(pic);
+        // The asset below can be re-downloaded from
+        // https://fiddle.skia.org/c/cbb8dee39e9f1576cd97c2d504db8eee
     }, '/assets/red_line.skp');
 
     it('can draw once using drawOnce utility method', (done) => {
@@ -713,7 +897,7 @@ describe('Core canvas behavior', () => {
             // ourselves), so reportSurface would likely be blank if we
             // were to call it.
             done();
-        }
+        };
         surface.drawOnce(drawFrame);
         // Reminder: drawOnce is async. In this test, we are just making
         // sure the drawOnce function is there and doesn't crash, so we can
@@ -743,7 +927,7 @@ describe('Core canvas behavior', () => {
             path.delete();
             paint.delete();
             done();
-        }
+        };
         const dirtyRect = CanvasKit.XYWHRect(10, 10, 15, 15);
         surface.drawOnce(drawFrame, dirtyRect);
         // We simply ensure that passing a dirty rect doesn't crash.
@@ -763,25 +947,18 @@ describe('Core canvas behavior', () => {
     });
 
     gm('combined_shaders', (canvas) => {
-        const rShader = CanvasKit.Shader.Color(CanvasKit.Color(255, 0, 0, 1.0));
-        const gShader = CanvasKit.Shader.Color(CanvasKit.Color(0, 255, 0, 0.6));
-        const bShader = CanvasKit.Shader.Color(CanvasKit.Color(0, 0, 255, 1.0));
+        const rShader = CanvasKit.Shader.Color(CanvasKit.Color(255, 0, 0, 1.0)); // deprecated
+        const gShader = CanvasKit.Shader.MakeColor(CanvasKit.Color(0, 255, 0, 0.6));
 
-        const rgShader = CanvasKit.Shader.Blend(CanvasKit.BlendMode.SrcOver, rShader, gShader);
+        const rgShader = CanvasKit.Shader.MakeBlend(CanvasKit.BlendMode.SrcOver, rShader, gShader);
 
         const p = new CanvasKit.Paint();
         p.setShader(rgShader);
         canvas.drawPaint(p);
 
-        const gbShader = CanvasKit.Shader.Lerp(0.5, gShader, bShader);
-
-        p.setShader(gbShader);
-        canvas.drawRect(CanvasKit.LTRBRect(5, 100, 300, 400), p);
         rShader.delete();
         gShader.delete();
-        bShader.delete();
         rgShader.delete();
-        gbShader.delete();
         p.delete();
     });
 
@@ -818,29 +995,119 @@ describe('Core canvas behavior', () => {
 
     gm('draw shadow', (canvas) => {
         const lightRadius = 20;
-        const flags = 0;
         const lightPos = [500,500,20];
         const zPlaneParams = [0,0,1];
         const path = starPath(CanvasKit);
+        const textFont = new CanvasKit.Font(null, 24);
+        const textPaint = new CanvasKit.Paint();
 
         canvas.drawShadow(path, zPlaneParams, lightPos, lightRadius,
-                              CanvasKit.BLACK, CanvasKit.MAGENTA, flags);
-    })
+                          CanvasKit.BLACK, CanvasKit.MAGENTA, 0);
+        canvas.drawText('Default Flags', 5, 250, textPaint, textFont);
+
+        let bounds = CanvasKit.getShadowLocalBounds(CanvasKit.Matrix.identity(),
+            path, zPlaneParams, lightPos, lightRadius, 0);
+        expectTypedArraysToEqual(bounds, Float32Array.of(-3.64462, -12.67541, 245.50, 242.59164));
+
+        bounds = CanvasKit.getShadowLocalBounds(CanvasKit.M44.identity(),
+            path, zPlaneParams, lightPos, lightRadius, 0);
+        expectTypedArraysToEqual(bounds, Float32Array.of(-3.64462, -12.67541, 245.50, 242.59164));
+
+        // Test that the APIs accept Malloc objs and the Malloced typearray
+        const mZPlane = CanvasKit.Malloc(Float32Array, 3);
+        mZPlane.toTypedArray().set(zPlaneParams);
+        const mLight = CanvasKit.Malloc(Float32Array, 3);
+        const lightTA = mLight.toTypedArray();
+        lightTA.set(lightPos);
+
+        canvas.translate(250, 250);
+        canvas.drawShadow(path, mZPlane, lightTA, lightRadius,
+                          CanvasKit.BLACK, CanvasKit.MAGENTA,
+                          CanvasKit.ShadowTransparentOccluder | CanvasKit.ShadowGeometricOnly | CanvasKit.ShadowDirectionalLight);
+        canvas.drawText('All Flags', 5, 250, textPaint, textFont);
+
+        const outBounds = new Float32Array(4);
+        CanvasKit.getShadowLocalBounds(CanvasKit.Matrix.rotated(Math.PI / 6),
+            path, mZPlane, mLight, lightRadius,
+            CanvasKit.ShadowTransparentOccluder | CanvasKit.ShadowGeometricOnly | CanvasKit.ShadowDirectionalLight,
+            outBounds);
+        expectTypedArraysToEqual(outBounds, Float32Array.of(-31.6630249, -15.24227, 245.5, 252.94101));
+
+        CanvasKit.Free(mZPlane);
+        CanvasKit.Free(mLight);
+
+        path.delete();
+        textFont.delete();
+        textPaint.delete();
+    });
+
+    gm('fractal_noise_shader', (canvas) => {
+        const shader = CanvasKit.Shader.MakeFractalNoise(0.1, 0.05, 2, 0, 0, 0);
+        const paint = new CanvasKit.Paint();
+        paint.setColor(CanvasKit.BLACK);
+        paint.setShader(shader);
+        canvas.drawPaint(paint);
+        paint.delete();
+        shader.delete();
+    });
+
+    gm('turbulance_shader', (canvas) => {
+        const shader = CanvasKit.Shader.MakeTurbulence(0.1, 0.05, 2, 117, 0, 0);
+        const paint = new CanvasKit.Paint();
+        paint.setColor(CanvasKit.BLACK);
+        paint.setShader(shader);
+        canvas.drawPaint(paint);
+        paint.delete();
+        shader.delete();
+    });
+
+    gm('fractal_noise_tiled_shader', (canvas) => {
+        const shader = CanvasKit.Shader.MakeFractalNoise(0.1, 0.05, 2, 0, 80, 80);
+        const paint = new CanvasKit.Paint();
+        paint.setColor(CanvasKit.BLACK);
+        paint.setShader(shader);
+        canvas.drawPaint(paint);
+        paint.delete();
+        shader.delete();
+    });
+
+    gm('turbulance_tiled_shader', (canvas) => {
+        const shader = CanvasKit.Shader.MakeTurbulence(0.1, 0.05, 2, 117, 80, 80);
+        const paint = new CanvasKit.Paint();
+        paint.setColor(CanvasKit.BLACK);
+        paint.setShader(shader);
+        canvas.drawPaint(paint);
+        paint.delete();
+        shader.delete();
+    });
 
     describe('ColorSpace Support', () => {
         it('Can create an SRGB 8888 surface', () => {
             const colorSpace = CanvasKit.ColorSpace.SRGB;
             const surface = CanvasKit.MakeCanvasSurface('test', CanvasKit.ColorSpace.SRGB);
             expect(surface).toBeTruthy('Could not make surface');
-            let info = surface.imageInfo()
+            let info = surface.imageInfo();
             expect(info.alphaType).toEqual(CanvasKit.AlphaType.Unpremul);
             expect(info.colorType).toEqual(CanvasKit.ColorType.RGBA_8888);
             expect(CanvasKit.ColorSpace.Equals(info.colorSpace, colorSpace))
                 .toBeTruthy("Surface not created with correct color space.");
 
-            const pixels = surface.getCanvas().readPixels(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
-                CanvasKit.AlphaType.Unpremul, CanvasKit.ColorType.RGBA_8888, colorSpace);
+            const mObj = CanvasKit.Malloc(Uint8Array, CANVAS_WIDTH * CANVAS_HEIGHT * 4);
+            mObj.toTypedArray()[0] = 127; // sentinel value. Should be overwritten by readPixels.
+            const canvas = surface.getCanvas();
+            canvas.clear(CanvasKit.TRANSPARENT);
+            const pixels = canvas.readPixels(0, 0, {
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                colorType: CanvasKit.ColorType.RGBA_8888,
+                alphaType: CanvasKit.AlphaType.Unpremul,
+                colorSpace: colorSpace
+            }, mObj, 4 * CANVAS_WIDTH);
             expect(pixels).toBeTruthy('Could not read pixels from surface');
+            expect(pixels[0] !== 127).toBeTruthy();
+            expect(pixels[0]).toEqual(mObj.toTypedArray()[0]);
+            CanvasKit.Free(mObj);
+            surface.delete();
         });
         it('Can create a Display P3 surface', () => {
             const colorSpace = CanvasKit.ColorSpace.DISPLAY_P3;
@@ -850,14 +1117,19 @@ describe('Core canvas behavior', () => {
                 console.log('Not expecting color space support in cpu backed suface.');
                 return;
             }
-            let info = surface.imageInfo()
+            let info = surface.imageInfo();
             expect(info.alphaType).toEqual(CanvasKit.AlphaType.Unpremul);
             expect(info.colorType).toEqual(CanvasKit.ColorType.RGBA_F16);
             expect(CanvasKit.ColorSpace.Equals(info.colorSpace, colorSpace))
                 .toBeTruthy("Surface not created with correct color space.");
 
-            const pixels = surface.getCanvas().readPixels(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
-                CanvasKit.AlphaType.Unpremul, CanvasKit.ColorType.RGBA_F16, colorSpace);
+            const pixels = surface.getCanvas().readPixels(0, 0, {
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                colorType: CanvasKit.ColorType.RGBA_F16,
+                alphaType: CanvasKit.AlphaType.Unpremul,
+                colorSpace: colorSpace
+            });
             expect(pixels).toBeTruthy('Could not read pixels from surface');
         });
         it('Can create an Adobe RGB surface', () => {
@@ -865,17 +1137,22 @@ describe('Core canvas behavior', () => {
             const surface = CanvasKit.MakeCanvasSurface('test', CanvasKit.ColorSpace.ADOBE_RGB);
             expect(surface).toBeTruthy('Could not make surface');
             if (!surface.reportBackendTypeIsGPU()) {
-                console.log('Not expecting color space support in cpu backed suface.');
+                console.log('Not expecting color space support in cpu backed surface.');
                 return;
             }
-            let info = surface.imageInfo()
+            let info = surface.imageInfo();
             expect(info.alphaType).toEqual(CanvasKit.AlphaType.Unpremul);
             expect(info.colorType).toEqual(CanvasKit.ColorType.RGBA_F16);
             expect(CanvasKit.ColorSpace.Equals(info.colorSpace, colorSpace))
                 .toBeTruthy("Surface not created with correct color space.");
 
-            const pixels = surface.getCanvas().readPixels(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT,
-                CanvasKit.AlphaType.Unpremul, CanvasKit.ColorType.RGBA_F16, colorSpace);
+            const pixels = surface.getCanvas().readPixels(0, 0, {
+                width: CANVAS_WIDTH,
+                height: CANVAS_HEIGHT,
+                colorType: CanvasKit.ColorType.RGBA_F16,
+                alphaType: CanvasKit.AlphaType.Unpremul,
+                colorSpace: colorSpace
+            });
             expect(pixels).toBeTruthy('Could not read pixels from surface');
         });
 
@@ -928,7 +1205,7 @@ describe('Core canvas behavior', () => {
 
         const radiansToDegrees = (rad) => {
            return (rad / Math.PI) * 180;
-        }
+        };
 
         // this should draw the same as concat_with4x4_canvas
         gm('concat_dommatrix', (canvas) => {
@@ -986,4 +1263,80 @@ describe('Core canvas behavior', () => {
             expect(expected[i]).toBeCloseTo(actual[i], 5, `element ${i}`);
         }
     }
+
+    it('can create a RasterDirectSurface', () => {
+        // Make enough space for a 5x5 8888 surface (4 bytes for R, G, B, A)
+        const rdsData = CanvasKit.Malloc(Uint8Array, 5 * 5 * 4);
+        const surface = CanvasKit.MakeRasterDirectSurface({
+            'width': 5,
+            'height': 5,
+            'colorType': CanvasKit.ColorType.RGBA_8888,
+            'alphaType': CanvasKit.AlphaType.Premul,
+            'colorSpace': CanvasKit.ColorSpace.SRGB,
+        }, rdsData, 5 * 4);
+
+        surface.getCanvas().clear(CanvasKit.Color(200, 100, 0, 0.8));
+        const pixels = rdsData.toTypedArray();
+        // Check that the first pixels colors are right.
+        expect(pixels[0]).toEqual(160); // red (premul, 0.8 * 200)
+        expect(pixels[1]).toEqual(80); // green (premul, 0.8 * 100)
+        expect(pixels[2]).toEqual(0); // blue (premul, not that it matters)
+        expect(pixels[3]).toEqual(204); // alpha (0.8 * 255)
+        surface.delete();
+        CanvasKit.Free(rdsData);
+    });
+
+    gm('makeImageFromTextureSource_TypedArray', (canvas, _, surface) => {
+        if (!CanvasKit.gpu) {
+            return;
+        }
+        // This creates and draws an Image that is 1 pixel wide, 4 pixels tall with
+        // the colors listed below.
+        const pixels = Uint8Array.from([
+            255,   0,   0, 255, // opaque red
+              0, 255,   0, 255, // opaque green
+              0,   0, 255, 255, // opaque blue
+            255,   0, 255, 100, // transparent purple
+        ]);
+        const img = surface.makeImageFromTextureSource(pixels, 1, 4);
+        canvas.drawImage(img, 1, 1, null);
+
+        const info = img.getImageInfo();
+        expect(info).toEqual({
+          'width': 1,
+          'height': 4,
+          'alphaType': CanvasKit.AlphaType.Unpremul,
+          'colorType': CanvasKit.ColorType.RGBA_8888,
+        });
+        const cs = img.getColorSpace();
+        expect(CanvasKit.ColorSpace.Equals(cs, CanvasKit.ColorSpace.SRGB)).toBeTruthy();
+
+        cs.delete();
+        img.delete();
+    });
+
+    gm('makeImageFromTextureSource_imgElement', (canvas, _, surface) => {
+        if (!CanvasKit.gpu) {
+            return;
+        }
+        // This makes an offscreen <img> with the provided source.
+        const imageEle = new Image();
+        imageEle.src = '/assets/mandrill_512.png';
+
+        // We need to wait until the image is loaded before the texture can use it. For good
+        // measure, we also wait for it to be decoded.
+        return imageEle.decode().then(() => {
+            const img = surface.makeImageFromTextureSource(imageEle);
+            canvas.drawImage(img, 0, 0, null);
+
+            const info = img.getImageInfo();
+            expect(info).toEqual({
+              'width': 512, // width and height should be derived from the image.
+              'height': 512,
+              'alphaType': CanvasKit.AlphaType.Unpremul,
+              'colorType': CanvasKit.ColorType.RGBA_8888,
+            });
+            img.delete();
+        });
+    });
 });

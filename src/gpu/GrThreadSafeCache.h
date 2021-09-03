@@ -8,10 +8,12 @@
 #ifndef GrThreadSafeCache_DEFINED
 #define GrThreadSafeCache_DEFINED
 
+#include "include/core/SkRefCnt.h"
 #include "include/private/SkSpinlock.h"
 #include "src/core/SkArenaAlloc.h"
 #include "src/core/SkTDynamicHash.h"
 #include "src/core/SkTInternalLList.h"
+#include "src/gpu/GrGpuBuffer.h"
 #include "src/gpu/GrSurfaceProxyView.h"
 
 // Ganesh creates a lot of utility textures (e.g., blurred-rrect masks) that need to be shared
@@ -80,6 +82,8 @@ public:
     // Drop uniquely held refs that were last accessed before 'purgeTime'
     void dropUniqueRefsOlderThan(GrStdSteadyClock::time_point purgeTime)  SK_EXCLUDES(fSpinLock);
 
+    SkDEBUGCODE(bool has(const GrUniqueKey&)  SK_EXCLUDES(fSpinLock);)
+
     GrSurfaceProxyView find(const GrUniqueKey&)  SK_EXCLUDES(fSpinLock);
     std::tuple<GrSurfaceProxyView, sk_sp<SkData>> findWithData(
                                                       const GrUniqueKey&)  SK_EXCLUDES(fSpinLock);
@@ -92,6 +96,80 @@ public:
                                  const GrSurfaceProxyView&)  SK_EXCLUDES(fSpinLock);
     std::tuple<GrSurfaceProxyView, sk_sp<SkData>> findOrAddWithData(
                             const GrUniqueKey&, const GrSurfaceProxyView&)  SK_EXCLUDES(fSpinLock);
+
+    // To hold vertex data in the cache and have it transparently transition from cpu-side to
+    // gpu-side while being shared between all the threads we need a ref counted object that
+    // keeps hold of the cpu-side data but allows deferred filling in of the mirroring gpu buffer.
+    class VertexData : public SkNVRefCnt<VertexData> {
+    public:
+        ~VertexData();
+
+        const void* vertices() const { return fVertices; }
+        size_t size() const { return fNumVertices * fVertexSize; }
+
+        int numVertices() const { return fNumVertices; }
+        size_t vertexSize() const { return fVertexSize; }
+
+        // TODO: make these return const GrGpuBuffers?
+        GrGpuBuffer* gpuBuffer() { return fGpuBuffer.get(); }
+        sk_sp<GrGpuBuffer> refGpuBuffer() { return fGpuBuffer; }
+
+        void setGpuBuffer(sk_sp<GrGpuBuffer> gpuBuffer) {
+            // TODO: once we add the gpuBuffer we could free 'fVertices'. Deinstantiable
+            // DDLs could throw a monkey wrench into that plan though.
+            SkASSERT(!fGpuBuffer);
+            fGpuBuffer = gpuBuffer;
+        }
+
+        void reset() {
+            sk_free(const_cast<void*>(fVertices));
+            fVertices = nullptr;
+            fNumVertices = 0;
+            fVertexSize = 0;
+            fGpuBuffer.reset();
+        }
+
+    private:
+        friend class GrThreadSafeCache;  // for access to ctor
+
+        VertexData(const void* vertices, int numVertices, size_t vertexSize)
+                : fVertices(vertices)
+                , fNumVertices(numVertices)
+                , fVertexSize(vertexSize) {
+        }
+
+        VertexData(sk_sp<GrGpuBuffer> gpuBuffer, int numVertices, size_t vertexSize)
+                : fVertices(nullptr)
+                , fNumVertices(numVertices)
+                , fVertexSize(vertexSize)
+                , fGpuBuffer(std::move(gpuBuffer)) {
+        }
+
+        const void*        fVertices;
+        int                fNumVertices;
+        size_t             fVertexSize;
+
+        sk_sp<GrGpuBuffer> fGpuBuffer;
+    };
+
+    // The returned VertexData object takes ownership of 'vertices' which had better have been
+    // allocated with malloc!
+    static sk_sp<VertexData> MakeVertexData(const void* vertices,
+                                            int vertexCount,
+                                            size_t vertexSize);
+    static sk_sp<VertexData> MakeVertexData(sk_sp<GrGpuBuffer> buffer,
+                                            int vertexCount,
+                                            size_t vertexSize);
+
+    std::tuple<sk_sp<VertexData>, sk_sp<SkData>> findVertsWithData(
+                                                        const GrUniqueKey&)  SK_EXCLUDES(fSpinLock);
+
+    typedef bool (*IsNewerBetter)(SkData* incumbent, SkData* challenger);
+
+    std::tuple<sk_sp<VertexData>, sk_sp<SkData>> addVertsWithData(
+                                                        const GrUniqueKey&,
+                                                        sk_sp<VertexData>,
+                                                        IsNewerBetter)  SK_EXCLUDES(fSpinLock);
 
     void remove(const GrUniqueKey&)  SK_EXCLUDES(fSpinLock);
 
@@ -110,33 +188,135 @@ public:
                                                                             SkBackingFit);
 private:
     struct Entry {
-        Entry(const GrUniqueKey& key, const GrSurfaceProxyView& view) : fKey(key), fView(view) {}
+        Entry(const GrUniqueKey& key, const GrSurfaceProxyView& view)
+                : fKey(key)
+                , fView(view)
+                , fTag(Entry::kView) {
+        }
 
-        // Note: the unique key is stored here bc it is never attached to a proxy or a GrTexture
-        GrUniqueKey                  fKey;
-        GrSurfaceProxyView           fView;
+        Entry(const GrUniqueKey& key, sk_sp<VertexData> vertData)
+                : fKey(key)
+                , fVertData(std::move(vertData))
+                , fTag(Entry::kVertData) {
+        }
+
+        ~Entry() {
+            this->makeEmpty();
+        }
+
+        bool uniquelyHeld() const {
+            SkASSERT(fTag != kEmpty);
+
+            if (fTag == kView && fView.proxy()->unique()) {
+                return true;
+            } else if (fTag == kVertData && fVertData->unique()) {
+                return true;
+            }
+
+            return false;
+        }
+
+        const GrUniqueKey& key() const {
+            SkASSERT(fTag != kEmpty);
+            return fKey;
+        }
+
+        SkData* getCustomData() const {
+            SkASSERT(fTag != kEmpty);
+            return fKey.getCustomData();
+        }
+
+        sk_sp<SkData> refCustomData() const {
+            SkASSERT(fTag != kEmpty);
+            return fKey.refCustomData();
+        }
+
+        GrSurfaceProxyView view() {
+            SkASSERT(fTag == kView);
+            return fView;
+        }
+
+        sk_sp<VertexData> vertexData() {
+            SkASSERT(fTag == kVertData);
+            return fVertData;
+        }
+
+        void set(const GrUniqueKey& key, const GrSurfaceProxyView& view) {
+            SkASSERT(fTag == kEmpty);
+            fKey = key;
+            fView = view;
+            fTag = kView;
+        }
+
+        void makeEmpty() {
+            fKey.reset();
+            if (fTag == kView) {
+                fView.reset();
+            } else if (fTag == kVertData) {
+                fVertData.reset();
+            }
+            fTag = kEmpty;
+        }
+
+        void set(const GrUniqueKey& key, sk_sp<VertexData> vertData) {
+            SkASSERT(fTag == kEmpty || fTag == kVertData);
+            fKey = key;
+            fVertData = vertData;
+            fTag = kVertData;
+        }
+
+        // The thread-safe cache gets to directly manipulate the llist and last-access members
         GrStdSteadyClock::time_point fLastAccess;
-
         SK_DECLARE_INTERNAL_LLIST_INTERFACE(Entry);
 
         // for SkTDynamicHash
-        static const GrUniqueKey& GetKey(const Entry& e) { return e.fKey; }
+        static const GrUniqueKey& GetKey(const Entry& e) {
+            SkASSERT(e.fTag != kEmpty);
+            return e.fKey;
+        }
         static uint32_t Hash(const GrUniqueKey& key) { return key.hash(); }
+
+    private:
+        // Note: the unique key is stored here bc it is never attached to a proxy or a GrTexture
+        GrUniqueKey             fKey;
+        union {
+            GrSurfaceProxyView  fView;
+            sk_sp<VertexData>   fVertData;
+        };
+
+        enum {
+            kEmpty,
+            kView,
+            kVertData,
+        } fTag { kEmpty };
     };
 
-    Entry* getEntry(const GrUniqueKey&, const GrSurfaceProxyView&) SK_REQUIRES(fSpinLock);
+    void makeExistingEntryMRU(Entry*)  SK_REQUIRES(fSpinLock);
+    Entry* makeNewEntryMRU(Entry*)  SK_REQUIRES(fSpinLock);
+
+    Entry* getEntry(const GrUniqueKey&, const GrSurfaceProxyView&)  SK_REQUIRES(fSpinLock);
+    Entry* getEntry(const GrUniqueKey&, sk_sp<VertexData>)  SK_REQUIRES(fSpinLock);
+
     void recycleEntry(Entry*)  SK_REQUIRES(fSpinLock);
 
     std::tuple<GrSurfaceProxyView, sk_sp<SkData>> internalFind(
-                                                       const GrUniqueKey&)  SK_REQUIRES(fSpinLock);
+                                                        const GrUniqueKey&)  SK_REQUIRES(fSpinLock);
     std::tuple<GrSurfaceProxyView, sk_sp<SkData>> internalAdd(
-                            const GrUniqueKey&, const GrSurfaceProxyView&)  SK_REQUIRES(fSpinLock);
+                                                const GrUniqueKey&,
+                                                const GrSurfaceProxyView&)  SK_REQUIRES(fSpinLock);
+
+    std::tuple<sk_sp<VertexData>, sk_sp<SkData>> internalFindVerts(
+                                                        const GrUniqueKey&)  SK_REQUIRES(fSpinLock);
+    std::tuple<sk_sp<VertexData>, sk_sp<SkData>> internalAddVerts(
+                                                        const GrUniqueKey&,
+                                                        sk_sp<VertexData>,
+                                                        IsNewerBetter)  SK_REQUIRES(fSpinLock);
 
     mutable SkSpinlock fSpinLock;
 
-    SkTDynamicHash<Entry, GrUniqueKey> fUniquelyKeyedProxyViewMap  SK_GUARDED_BY(fSpinLock);
+    SkTDynamicHash<Entry, GrUniqueKey> fUniquelyKeyedEntryMap  SK_GUARDED_BY(fSpinLock);
     // The head of this list is the MRU
-    SkTInternalLList<Entry>            fUniquelyKeyedProxyViewList  SK_GUARDED_BY(fSpinLock);
+    SkTInternalLList<Entry>            fUniquelyKeyedEntryList  SK_GUARDED_BY(fSpinLock);
 
     // TODO: empirically determine this from the skps
     static const int kInitialArenaSize = 64 * sizeof(Entry);

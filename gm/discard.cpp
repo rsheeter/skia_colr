@@ -21,16 +21,13 @@
 #include "include/utils/SkRandom.h"
 #include "tools/ToolUtils.h"
 
-class GrContext;
-class GrRenderTargetContext;
-
 namespace skiagm {
 
 /*
  * This GM exercises SkCanvas::discard() by creating an offscreen SkSurface and repeatedly
  * discarding it, drawing to it, and then drawing it to the main canvas.
  */
-class DiscardGM : public GpuGM {
+class DiscardGM : public GM {
 
 public:
     DiscardGM() {}
@@ -44,10 +41,9 @@ protected:
         return SkISize::Make(100, 100);
     }
 
-    DrawResult onDraw(GrRecordingContext* context, GrRenderTargetContext*, SkCanvas* canvas,
-                      SkString* errorMsg) override {
-        auto direct = context->asDirectContext();
-        if (!direct) {
+    DrawResult onDraw(SkCanvas* canvas, SkString* errorMsg) override {
+        auto dContext = GrAsDirectContext(canvas->recordingContext());
+        if (!dContext || dContext->abandoned()) {
             *errorMsg = "GM relies on having access to a live direct context.";
             return DrawResult::kSkip;
         }
@@ -56,7 +52,7 @@ protected:
         size.fWidth /= 10;
         size.fHeight /= 10;
         SkImageInfo info = SkImageInfo::MakeN32Premul(size);
-        sk_sp<SkSurface> surface = SkSurface::MakeRenderTarget(direct, SkBudgeted::kNo, info);
+        sk_sp<SkSurface> surface = SkSurface::MakeRenderTarget(dContext, SkBudgeted::kNo, info);
         if (nullptr == surface) {
             *errorMsg = "Could not create render target.";
             return DrawResult::kFail;
@@ -83,7 +79,7 @@ protected:
                       surface->getCanvas()->drawPaint(paint);
                       break;
               }
-              surface->draw(canvas, 10.f*x, 10.f*y, nullptr);
+              surface->draw(canvas, 10.f*x, 10.f*y);
             }
         }
 

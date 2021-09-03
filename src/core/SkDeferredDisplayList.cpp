@@ -14,9 +14,8 @@
 class SkSurfaceCharacterization;
 
 #if SK_SUPPORT_GPU
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrRenderTask.h"
-#include "src/gpu/ccpr/GrCCPerOpsTaskPaths.h"
 #endif
 
 SkDeferredDisplayList::SkDeferredDisplayList(const SkSurfaceCharacterization& characterization,
@@ -24,10 +23,14 @@ SkDeferredDisplayList::SkDeferredDisplayList(const SkSurfaceCharacterization& ch
                                              sk_sp<LazyProxyData> lazyProxyData)
         : fCharacterization(characterization)
 #if SK_SUPPORT_GPU
+        , fArenas(true)
         , fTargetProxy(std::move(targetProxy))
         , fLazyProxyData(std::move(lazyProxyData))
 #endif
 {
+#if SK_SUPPORT_GPU
+    SkASSERT(fTargetProxy->isDDLTarget());
+#endif
 }
 
 SkDeferredDisplayList::~SkDeferredDisplayList() {

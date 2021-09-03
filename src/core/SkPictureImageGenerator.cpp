@@ -12,7 +12,6 @@
 #include "include/core/SkPicture.h"
 #include "include/core/SkSurface.h"
 #include "src/core/SkTLazy.h"
-#include "src/gpu/SkGr.h"
 #include "src/image/SkImage_Base.h"
 
 class SkPictureImageGenerator : public SkImageGenerator {
@@ -93,11 +92,12 @@ bool SkPictureImageGenerator::onGetPixels(const SkImageInfo& info, void* pixels,
 #if SK_SUPPORT_GPU
 #include "include/gpu/GrRecordingContext.h"
 #include "src/gpu/GrRecordingContextPriv.h"
+#include "src/gpu/SkGr.h"
 
 GrSurfaceProxyView SkPictureImageGenerator::onGenerateTexture(GrRecordingContext* ctx,
                                                               const SkImageInfo& info,
                                                               const SkIPoint& origin,
-                                                              GrMipmapped mipMapped,
+                                                              GrMipmapped mipmapped,
                                                               GrImageTexGenPolicy texGenPolicy) {
     SkASSERT(ctx);
 
@@ -106,9 +106,8 @@ GrSurfaceProxyView SkPictureImageGenerator::onGenerateTexture(GrRecordingContext
     SkBudgeted budgeted = texGenPolicy == GrImageTexGenPolicy::kNew_Uncached_Unbudgeted
                                   ? SkBudgeted::kNo
                                   : SkBudgeted::kYes;
-    auto surface = SkSurface::MakeRenderTarget(ctx, budgeted, info, 0,
-                                               kTopLeft_GrSurfaceOrigin, &props,
-                                               mipMapped == GrMipmapped::kYes);
+    auto surface = SkSurface::MakeRenderTarget(ctx, budgeted, info, 0, kTopLeft_GrSurfaceOrigin,
+                                               &props, mipmapped == GrMipmapped::kYes);
     if (!surface) {
         return {};
     }
@@ -121,10 +120,10 @@ GrSurfaceProxyView SkPictureImageGenerator::onGenerateTexture(GrRecordingContext
     if (!image) {
         return {};
     }
-    const GrSurfaceProxyView* view = as_IB(image)->view(ctx);
+    auto [view, ct] = as_IB(image)->asView(ctx, mipmapped);
     SkASSERT(view);
-    SkASSERT(mipMapped == GrMipmapped::kNo ||
-             view->asTextureProxy()->mipmapped() == GrMipmapped::kYes);
-    return *view;
+    SkASSERT(mipmapped == GrMipmapped::kNo ||
+             view.asTextureProxy()->mipmapped() == GrMipmapped::kYes);
+    return view;
 }
 #endif

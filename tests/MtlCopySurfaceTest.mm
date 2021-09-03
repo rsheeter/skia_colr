@@ -7,7 +7,7 @@
 
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/mtl/GrMtlGpu.h"
 #include "tests/Test.h"
@@ -45,7 +45,7 @@ DEF_GPUTEST_FOR_METAL_CONTEXT(MtlCopySurfaceTest, reporter, ctxInfo) {
     sk_sp<GrSurfaceProxy> srcProxy = proxyProvider->wrapBackendRenderTarget(backendRT, nullptr);
 
     auto dstProxy = GrSurfaceProxy::Copy(context,
-                                         srcProxy.get(),
+                                         srcProxy,
                                          kTopLeft_GrSurfaceOrigin,
                                          GrMipmapped::kNo,
                                          SkBackingFit::kExact,
@@ -61,8 +61,9 @@ DEF_GPUTEST_FOR_METAL_CONTEXT(MtlCopySurfaceTest, reporter, ctxInfo) {
     GrBackendFormat backendFormat = GrBackendFormat::MakeMtl(drawable.texture.pixelFormat);
     GrSurface* src = srcProxy->peekSurface();
     sk_sp<GrTexture> dst =
-            gpu->createTexture({kWidth, kHeight}, backendFormat, GrRenderable::kNo, 1,
-                               GrMipmapped::kNo, SkBudgeted::kNo, GrProtected::kNo);
+            gpu->createTexture({kWidth, kHeight}, backendFormat, GrTextureType::k2D,
+                               GrRenderable::kNo, 1, GrMipmapped::kNo, SkBudgeted::kNo,
+                               GrProtected::kNo);
 
     bool result = gpu->copySurface(dst.get(), src, SkIRect::MakeXYWH(0, 0, kWidth, kHeight),
                                    SkIPoint::Make(0, 0));

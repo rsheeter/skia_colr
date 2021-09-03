@@ -16,42 +16,54 @@ namespace SkSL {
 /**
  * A ternary expression (test ? ifTrue : ifFalse).
  */
-class TernaryExpression : public Expression {
+class TernaryExpression final : public Expression {
 public:
     static constexpr Kind kExpressionKind = Kind::kTernary;
 
     TernaryExpression(int offset, std::unique_ptr<Expression> test,
                       std::unique_ptr<Expression> ifTrue, std::unique_ptr<Expression> ifFalse)
-    : INHERITED(offset, kExpressionKind, &ifTrue->type()) {
-        SkASSERT(ifTrue->type() == ifFalse->type());
-        fExpressionChildren.reserve(3);
-        fExpressionChildren.push_back(std::move(test));
-        fExpressionChildren.push_back(std::move(ifTrue));
-        fExpressionChildren.push_back(std::move(ifFalse));
+        : INHERITED(offset, kExpressionKind, &ifTrue->type())
+        , fTest(std::move(test))
+        , fIfTrue(std::move(ifTrue))
+        , fIfFalse(std::move(ifFalse)) {
+        SkASSERT(this->ifTrue()->type() == this->ifFalse()->type());
     }
 
+    // Creates a potentially-simplified form of the ternary. Typechecks and coerces input
+    // expressions; reports errors via ErrorReporter.
+    static std::unique_ptr<Expression> Convert(const Context& context,
+                                            std::unique_ptr<Expression> test,
+                                            std::unique_ptr<Expression> ifTrue,
+                                            std::unique_ptr<Expression> ifFalse);
+
+    // Creates a potentially-simplified form of the ternary; reports errors via ASSERT.
+    static std::unique_ptr<Expression> Make(const Context& context,
+                                            std::unique_ptr<Expression> test,
+                                            std::unique_ptr<Expression> ifTrue,
+                                            std::unique_ptr<Expression> ifFalse);
+
     std::unique_ptr<Expression>& test() {
-        return fExpressionChildren[0];
+        return fTest;
     }
 
     const std::unique_ptr<Expression>& test() const {
-        return fExpressionChildren[0];
+        return fTest;
     }
 
     std::unique_ptr<Expression>& ifTrue() {
-        return fExpressionChildren[1];
+        return fIfTrue;
     }
 
     const std::unique_ptr<Expression>& ifTrue() const {
-        return fExpressionChildren[1];
+        return fIfTrue;
     }
 
     std::unique_ptr<Expression>& ifFalse() {
-        return fExpressionChildren[2];
+        return fIfFalse;
     }
 
     const std::unique_ptr<Expression>& ifFalse() const {
-        return fExpressionChildren[2];
+        return fIfFalse;
     }
 
     bool hasProperty(Property property) const override {
@@ -65,9 +77,9 @@ public:
     }
 
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new TernaryExpression(fOffset, this->test()->clone(),
-                                                                 this->ifTrue()->clone(),
-                                                                 this->ifFalse()->clone()));
+        return std::make_unique<TernaryExpression>(fOffset, this->test()->clone(),
+                                                   this->ifTrue()->clone(),
+                                                   this->ifFalse()->clone());
     }
 
     String description() const override {
@@ -76,6 +88,10 @@ public:
     }
 
 private:
+    std::unique_ptr<Expression> fTest;
+    std::unique_ptr<Expression> fIfTrue;
+    std::unique_ptr<Expression> fIfFalse;
+
     using INHERITED = Expression;
 };
 

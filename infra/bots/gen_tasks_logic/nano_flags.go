@@ -31,10 +31,10 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 		if b.extraConfig("BonusConfigs") {
 			configs = []string{
 				"f16",
-				"srgb",
-				"esrgb",
-				"narrow",
-				"enarrow",
+				"srgb-rgba",
+				"srgb-f16",
+				"narrow-rgba",
+				"narrow-f16",
 			}
 		}
 
@@ -57,9 +57,12 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 			// iOS crashes with MSAA (skia:6399)
 			// Nexus7 (Tegra3) does not support MSAA.
 			// MSAA is disabled on Pixel3a (https://b.corp.google.com/issues/143074513).
-			if b.os("iOS") || b.model("Nexus7", "Pixel3a") {
+			// MSAA is disabled on Pixel5 (https://skbug.com/11152).
+			if b.os("iOS") || b.model("Nexus7", "Pixel3a", "Pixel5") {
 				sampleCount = 0
 			}
+		} else if b.matchGpu("AppleM1") {
+			sampleCount = 4
 		} else if b.matchGpu("Intel") {
 			// MSAA doesn't work well on Intel GPUs chromium:527565, chromium:983926
 			sampleCount = 0
@@ -67,12 +70,15 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 			glPrefix = "gles"
 		}
 
-		configs = append(configs, glPrefix, glPrefix+"srgb")
+		configs = append(configs, glPrefix, "srgb-"+glPrefix)
 
-		// glnarrow/glesnarrow tests the case of color converting *all* content
+		if b.os("Ubuntu18") && b.noExtraConfig() {
+			configs = append(configs, glPrefix+"reducedshaders")
+		}
+		// narrow-gl/gles tests the case of color converting *all* content
 		// It hangs on the AndroidOne (Mali400)  skia:10669
 		if (!b.gpu("Mali400MP2")) {
-			configs = append(configs, glPrefix+"narrow")
+			configs = append(configs, "narrow-"+glPrefix)
 		}
 
 		// skia:10644 The fake ES2 config is used to compare highest available ES version to
@@ -86,16 +92,22 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 
 		if sampleCount > 0 {
 			configs = append(configs, fmt.Sprintf("%smsaa%d", glPrefix, sampleCount))
+			if b.gpu("QuadroP400", "MaliG77", "AppleM1") {
+				configs = append(configs, fmt.Sprintf("%sdmsaa", glPrefix))
+			}
 		}
 
 		// We want to test both the OpenGL config and the GLES config on Linux Intel:
 		// GL is used by Chrome, GLES is used by ChromeOS.
 		if b.matchGpu("Intel") && b.isLinux() {
-			configs = append(configs, "gles", "glessrgb")
+			configs = append(configs, "gles", "srgb-gles")
 		}
 
 		if b.extraConfig("CommandBuffer") {
-			configs = []string{"commandbuffer"}
+			configs = []string{"cmdbuffer_es2"}
+			if !b.matchGpu("Intel") {
+				configs = append(configs, "cmdbuffer_es2_dmsaa")
+			}
 		}
 
 		if b.extraConfig("Vulkan") {
@@ -118,6 +130,9 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 				configs = append(configs, "mtlmsaa4")
 			} else {
 				configs = append(configs, "mtlmsaa8")
+			}
+			if b.model("iPhone11") {
+				configs = append(configs, "mtlreducedshaders")
 			}
 		}
 
@@ -147,6 +162,14 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 	args = append(args, "--config")
 	args = append(args, configs...)
 
+	// Use 4 internal msaa samples on mobile and AppleM1, otherwise 8.
+	args = append(args, "--internalSamples")
+	if b.os("Android") || b.os("iOS") || b.matchGpu("AppleM1") {
+		args = append(args, "4")
+	} else {
+		args = append(args, "8")
+	}
+
 	// By default, we test with GPU threading enabled, unless specifically
 	// disabled.
 	if b.extraConfig("NoGPUThreads") {
@@ -158,11 +181,6 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 		args = append(args, "--samples", "1")
 		// Ensure that the bot framework does not think we have timed out.
 		args = append(args, "--keepAlive", "true")
-	}
-
-	// skia:9036
-	if b.model("NVIDIA_Shield") {
-		args = append(args, "--dontReduceOpsTaskSplitting")
 	}
 
 	// Some people don't like verbose output.
@@ -239,6 +257,25 @@ func (b *taskBuilder) nanobenchFlags(doUpload bool) {
 	if b.model("Pixel3") && b.extraConfig("Vulkan") {
 		// skia:9972
 		match = append(match, "~^path_text_clipped_uncached$")
+	}
+
+	if b.model(DONT_REDUCE_OPS_TASK_SPLITTING_MODELS...) {
+		args = append(args, "--dontReduceOpsTaskSplitting", "true")
+	}
+	if b.model("NUC7i5BNK") {
+		args = append(args, "--gpuResourceCacheLimit", "16777216")
+	}
+
+	if b.extraConfig("DMSAAStats") {
+		// Render tiled, single-frame skps with an extremely tall canvas that hopefully allows for
+		// us to tile most or all of the content.
+		args = append(args,
+			"--sourceType", "skp", "--clip", "0,0,1600,16384", "--GPUbenchTileW", "1600",
+			"--GPUbenchTileH", "512", "--samples", "1", "--loops", "1", "--config", "gldmsaa",
+			"--dmsaaStatsDump")
+		// Don't collect stats on the skps generated from vector content. We want these to actually
+		// trigger dmsaa.
+		match = append(match, "~svg", "~chalkboard", "~motionmark")
 	}
 
 	// We do not need or want to benchmark the decodes of incomplete images.

@@ -25,21 +25,22 @@ static inline int grsltype_to_location_size(GrSLType type) {
         case kFloat4_GrSLType:
         case kHalf4_GrSLType:
             return 1;
-        case kUint2_GrSLType:
-            return 1;
         case kInt2_GrSLType:
+        case kUint2_GrSLType:
         case kShort2_GrSLType:
         case kUShort2_GrSLType:
         case kByte2_GrSLType:
         case kUByte2_GrSLType:
             return 1;
         case kInt3_GrSLType:
+        case kUint3_GrSLType:
         case kShort3_GrSLType:
         case kUShort3_GrSLType:
         case kByte3_GrSLType:
         case kUByte3_GrSLType:
             return 1;
         case kInt4_GrSLType:
+        case kUint4_GrSLType:
         case kShort4_GrSLType:
         case kUShort4_GrSLType:
         case kByte4_GrSLType:
@@ -64,6 +65,9 @@ static inline int grsltype_to_location_size(GrSLType type) {
         case kTexture2DRectSampler_GrSLType:
              return 0;
         case kBool_GrSLType:
+        case kBool2_GrSLType:
+        case kBool3_GrSLType:
+        case kBool4_GrSLType:
              return 1;
         case kInt_GrSLType: // fall through
         case kShort_GrSLType:
@@ -86,10 +90,7 @@ static void finalize_helper(GrVkVaryingHandler::VarArray& vars) {
 
         int elementSize = grsltype_to_location_size(var.getType());
         SkASSERT(elementSize > 0);
-        int numElements = 1;
-        if (var.isArray() && !var.isUnsizedArray()) {
-            numElements = var.getArrayCount();
-        }
+        int numElements = var.isArray() ? var.getArrayCount() : 1;
         SkASSERT(numElements > 0);
         locationIndex += elementSize * numElements;
     }
@@ -102,8 +103,6 @@ static void finalize_helper(GrVkVaryingHandler::VarArray& vars) {
 void GrVkVaryingHandler::onFinalize() {
     finalize_helper(fVertexInputs);
     finalize_helper(fVertexOutputs);
-    finalize_helper(fGeomInputs);
-    finalize_helper(fGeomOutputs);
     finalize_helper(fFragInputs);
     finalize_helper(fFragOutputs);
 }

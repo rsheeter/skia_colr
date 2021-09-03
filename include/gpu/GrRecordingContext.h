@@ -12,15 +12,21 @@
 #include "include/private/GrImageContext.h"
 #include "include/private/SkTArray.h"
 
+#if GR_GPU_STATS && GR_TEST_UTILS
+#include <map>
+#include <string>
+#endif
+
 class GrAuditTrail;
 class GrBackendFormat;
 class GrDrawingManager;
 class GrOnFlushCallbackObject;
-class GrOpMemoryPool;
+class GrMemoryPool;
 class GrProgramDesc;
 class GrProgramInfo;
+class GrProxyProvider;
 class GrRecordingContextPriv;
-class GrSurfaceContext;
+class GrSubRunAllocator;
 class GrSurfaceProxy;
 class GrTextBlobCache;
 class GrThreadSafeCache;
@@ -94,17 +100,17 @@ public:
     // GrRecordingContext. Arenas does not maintain ownership of the pools it groups together.
     class Arenas {
     public:
-        Arenas(GrOpMemoryPool*, SkArenaAlloc*);
-
-        // For storing GrOp-derived classes recorded by a GrRecordingContext
-        GrOpMemoryPool* opMemoryPool() { return fOpMemoryPool; }
+        Arenas(SkArenaAlloc*, GrSubRunAllocator*);
 
         // For storing pipelines and other complex data as-needed by ops
         SkArenaAlloc* recordTimeAllocator() { return fRecordTimeAllocator; }
 
+        // For storing GrTextBlob SubRuns
+        GrSubRunAllocator* recordTimeSubRunAllocator() { return fRecordTimeSubRunAllocator; }
+
     private:
-        GrOpMemoryPool* fOpMemoryPool;
-        SkArenaAlloc*   fRecordTimeAllocator;
+        SkArenaAlloc* fRecordTimeAllocator;
+        GrSubRunAllocator* fRecordTimeSubRunAllocator;
     };
 
 protected:
@@ -115,7 +121,7 @@ protected:
     // Like Arenas, but preserves ownership of the underlying pools.
     class OwnedArenas {
     public:
-        OwnedArenas();
+        OwnedArenas(bool ddlRecording);
         ~OwnedArenas();
 
         Arenas get();
@@ -123,12 +129,14 @@ protected:
         OwnedArenas& operator=(OwnedArenas&&);
 
     private:
-        std::unique_ptr<GrOpMemoryPool> fOpMemoryPool;
-        std::unique_ptr<SkArenaAlloc>   fRecordTimeAllocator;
+        bool fDDLRecording;
+        std::unique_ptr<SkArenaAlloc> fRecordTimeAllocator;
+        std::unique_ptr<GrSubRunAllocator> fRecordTimeSubRunAllocator;
     };
 
-    GrRecordingContext(sk_sp<GrContextThreadSafeProxy>);
-    void setupDrawingManager(bool sortOpsTasks, bool reduceOpsTaskSplitting);
+    GrRecordingContext(sk_sp<GrContextThreadSafeProxy>, bool ddlRecording);
+
+    bool init() override;
 
     void abandonContext() override;
 
@@ -142,6 +150,9 @@ protected:
     // This entry point should only be used for DDL creation where we want the ops' lifetime to
     // match that of the DDL.
     OwnedArenas&& detachArenas();
+
+    GrProxyProvider* proxyProvider() { return fProxyProvider.get(); }
+    const GrProxyProvider* proxyProvider() const { return fProxyProvider.get(); }
 
     struct ProgramData {
         ProgramData(std::unique_ptr<const GrProgramDesc>, const GrProgramInfo*);
@@ -185,8 +196,6 @@ protected:
      */
     void addOnFlushCallbackObject(GrOnFlushCallbackObject*);
 
-    GrAuditTrail* auditTrail() { return fAuditTrail.get(); }
-
     GrRecordingContext* asRecordingContext() override { return this; }
 
     class Stats {
@@ -203,8 +212,8 @@ protected:
         void incNumPathMasksCacheHits() { fNumPathMaskCacheHits++; }
 
 #if GR_TEST_UTILS
-        void dump(SkString* out);
-        void dumpKeyValuePairs(SkTArray<SkString>* keys, SkTArray<double>* values);
+        void dump(SkString* out) const;
+        void dumpKeyValuePairs(SkTArray<SkString>* keys, SkTArray<double>* values) const;
 #endif
 
     private:
@@ -216,22 +225,38 @@ protected:
         void incNumPathMasksCacheHits() {}
 
 #if GR_TEST_UTILS
-        void dump(SkString*) {}
-        void dumpKeyValuePairs(SkTArray<SkString>* keys, SkTArray<double>* values) {}
+        void dump(SkString*) const {}
+        void dumpKeyValuePairs(SkTArray<SkString>* keys, SkTArray<double>* values) const {}
 #endif
 #endif // GR_GPU_STATS
     } fStats;
+
+#if GR_GPU_STATS && GR_TEST_UTILS
+    struct DMSAAStats {
+        void dumpKeyValuePairs(SkTArray<SkString>* keys, SkTArray<double>* values) const;
+        void dump() const;
+        void merge(const DMSAAStats&);
+        int fNumRenderPasses = 0;
+        int fNumMultisampleRenderPasses = 0;
+        std::map<std::string, int> fTriggerCounts;
+    };
+
+    DMSAAStats fDMSAAStats;
+#endif
 
     Stats* stats() { return &fStats; }
     const Stats* stats() const { return &fStats; }
     void dumpJSON(SkJSONWriter*) const;
 
+protected:
+    // Delete last in case other objects call it during destruction.
+    std::unique_ptr<GrAuditTrail>     fAuditTrail;
+
 private:
     OwnedArenas                       fArenas;
 
     std::unique_ptr<GrDrawingManager> fDrawingManager;
-
-    std::unique_ptr<GrAuditTrail>     fAuditTrail;
+    std::unique_ptr<GrProxyProvider>  fProxyProvider;
 
 #if GR_TEST_UTILS
     int fSuppressWarningMessages = 0;

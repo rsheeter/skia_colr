@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -9,8 +10,6 @@ See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into gcl.
 """
 
-import collections
-import csv
 import fnmatch
 import os
 import re
@@ -23,21 +22,19 @@ REVERT_CL_SUBJECT_PREFIX = 'Revert '
 
 # Please add the complete email address here (and not just 'xyz@' or 'xyz').
 PUBLIC_API_OWNERS = (
-    'mtklein@google.com',
-    'reed@chromium.org',
-    'reed@google.com',
-    'bsalomon@chromium.org',
+    'brianosman@google.com',
     'bsalomon@google.com',
     'djsollen@chromium.org',
     'djsollen@google.com',
     'hcm@chromium.org',
     'hcm@google.com',
+    'reed@chromium.org',
+    'reed@google.com',
 )
 
 AUTHORS_FILE_NAME = 'AUTHORS'
 RELEASE_NOTES_FILE_NAME = 'RELEASE_NOTES.txt'
 
-DOCS_PREVIEW_URL = 'https://skia.org/?cl={issue}'
 GOLD_TRYBOT_URL = 'https://gold.skia.org/search?issue='
 
 SERVICE_ACCOUNT_SUFFIX = [
@@ -191,6 +188,24 @@ def _CheckGNFormatted(input_api, output_api):
           '`%s` failed, try\n\t%s' % (' '.join(cmd), fix)))
   return results
 
+
+def _CheckGitConflictMarkers(input_api, output_api):
+  pattern = input_api.re.compile('^(?:<<<<<<<|>>>>>>>) |^=======$')
+  results = []
+  for f in input_api.AffectedFiles():
+    for line_num, line in f.ChangedContents():
+      if f.LocalPath().endswith('.md'):
+        # First-level headers in markdown look a lot like version control
+        # conflict markers. http://daringfireball.net/projects/markdown/basics
+        continue
+      if pattern.match(line):
+        results.append(
+            output_api.PresubmitError(
+                'Git conflict markers found in %s:%d %s' % (
+                    f.LocalPath(), line_num, line)))
+  return results
+
+
 def _CheckIncludesFormatted(input_api, output_api):
   """Make sure #includes in files we're changing have been formatted."""
   files = [str(f) for f in input_api.AffectedFiles() if f.Action() != 'D']
@@ -200,27 +215,6 @@ def _CheckIncludesFormatted(input_api, output_api):
   if 0 != subprocess.call(cmd):
     return [output_api.PresubmitError('`%s` failed' % ' '.join(cmd))]
   return []
-
-def _CheckCompileIsolate(input_api, output_api):
-  """Ensure that gen_compile_isolate.py does not change compile.isolate."""
-  # Only run the check if files were added or removed.
-  results = []
-  script = os.path.join('infra', 'bots', 'gen_compile_isolate.py')
-  isolate = os.path.join('infra', 'bots', 'compile.isolated')
-  for f in input_api.AffectedFiles():
-    if f.Action() in ('A', 'D', 'R'):
-      break
-    if f.LocalPath() in (script, isolate):
-      break
-  else:
-    return results
-
-  cmd = ['python', script, 'test']
-  try:
-    subprocess.check_output(cmd, stderr=subprocess.STDOUT)
-  except subprocess.CalledProcessError as e:
-    results.append(output_api.PresubmitError(e.output))
-  return results
 
 
 class _WarningsAsErrors():
@@ -253,6 +247,29 @@ def _CheckDEPSValid(input_api, output_api):
   return results
 
 
+def _RegenerateAllExamplesCPP(input_api, output_api):
+  """Regenerates all_examples.cpp if an example was added or deleted."""
+  if not any(f.LocalPath().startswith('docs/examples/')
+             for f in input_api.AffectedFiles()):
+    return []
+  command_str = 'tools/fiddle/make_all_examples_cpp.py'
+  cmd = ['python', command_str]
+  if 0 != subprocess.call(cmd):
+    return [output_api.PresubmitError('`%s` failed' % ' '.join(cmd))]
+
+  results = []
+  git_diff_output = input_api.subprocess.check_output(
+      ['git', 'diff', '--no-ext-diff'])
+  if git_diff_output:
+    results += [output_api.PresubmitError(
+        'Diffs found after running "%s":\n\n%s\n'
+        'Please commit or discard the above changes.' % (
+            command_str,
+            git_diff_output,
+        )
+    )]
+  return results
+
 def _CommonChecks(input_api, output_api):
   """Presubmit checks common to upload and commit."""
   results = []
@@ -276,10 +293,11 @@ def _CommonChecks(input_api, output_api):
   results.extend(_IfDefChecks(input_api, output_api))
   results.extend(_CopyrightChecks(input_api, output_api,
                                   source_file_filter=sources))
-  results.extend(_CheckCompileIsolate(input_api, output_api))
   results.extend(_CheckDEPSValid(input_api, output_api))
   results.extend(_CheckIncludesFormatted(input_api, output_api))
   results.extend(_CheckGNFormatted(input_api, output_api))
+  results.extend(_CheckGitConflictMarkers(input_api, output_api))
+  results.extend(_RegenerateAllExamplesCPP(input_api, output_api))
   return results
 
 
@@ -497,19 +515,6 @@ def PostUploadHook(gerrit, change, output_api):
         output_api.PresubmitNotifyResult(
             'This change has only doc changes. Automatically added '
             '\'No-Try: true\' to the CL\'s description'))
-
-  # If there is at least one docs change then add preview link in the CL's
-  # description if it does not already exist there.
-  docs_preview_link = DOCS_PREVIEW_URL.format(issue=change.issue)
-  if (at_least_one_docs_change
-      and docs_preview_link not in footers.get('Docs-Preview', [])):
-    # Automatically add a link to where the docs can be previewed.
-    description_changed = True
-    change.AddDescriptionFooter('Docs-Preview', docs_preview_link)
-    results.append(
-        output_api.PresubmitNotifyResult(
-            'Automatically added a link to preview the docs changes to the '
-            'CL\'s description'))
 
   # If the description has changed update it.
   if description_changed:

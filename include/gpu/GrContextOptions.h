@@ -9,6 +9,7 @@
 #define GrContextOptions_DEFINED
 
 #include "include/core/SkData.h"
+#include "include/core/SkString.h"
 #include "include/core/SkTypes.h"
 #include "include/gpu/GrDriverBugWorkarounds.h"
 #include "include/gpu/GrTypes.h"
@@ -44,14 +45,29 @@ struct SK_API GrContextOptions {
      */
     class SK_API PersistentCache {
     public:
-        virtual ~PersistentCache() {}
+        virtual ~PersistentCache() = default;
 
         /**
          * Returns the data for the key if it exists in the cache, otherwise returns null.
          */
         virtual sk_sp<SkData> load(const SkData& key) = 0;
 
-        virtual void store(const SkData& key, const SkData& data) = 0;
+        // Placeholder until all clients override the 3-parameter store(), then remove this, and
+        // make that version pure virtual.
+        virtual void store(const SkData& /*key*/, const SkData& /*data*/) { SkASSERT(false); }
+
+        /**
+         * Stores data in the cache, indexed by key. description provides a human-readable
+         * version of the key.
+         */
+        virtual void store(const SkData& key, const SkData& data, const SkString& /*description*/) {
+            this->store(key, data);
+        }
+
+    protected:
+        PersistentCache() = default;
+        PersistentCache(const PersistentCache&) = delete;
+        PersistentCache& operator=(const PersistentCache&) = delete;
     };
 
     /**
@@ -61,8 +77,14 @@ struct SK_API GrContextOptions {
      */
     class SK_API ShaderErrorHandler {
     public:
-        virtual ~ShaderErrorHandler() {}
+        virtual ~ShaderErrorHandler() = default;
+
         virtual void compileError(const char* shader, const char* errors) = 0;
+
+    protected:
+        ShaderErrorHandler() = default;
+        ShaderErrorHandler(const ShaderErrorHandler&) = delete;
+        ShaderErrorHandler& operator=(const ShaderErrorHandler&) = delete;
     };
 
     GrContextOptions() {}
@@ -174,8 +196,10 @@ struct SK_API GrContextOptions {
     Enable fUseDrawInsteadOfClear = Enable::kDefault;
 
     /**
-     * Allow Ganesh to more aggressively reorder operations.
-     * Eventually this will just be what is done and will not be optional.
+     * Allow Ganesh to more aggressively reorder operations to reduce the number of render passes.
+     * Offscreen draws will be done upfront instead of interrupting the main render pass when
+     * possible. May increase VRAM usage, but still observes the resource cache limit.
+     * Enabled by default.
      */
     Enable fReduceOpsTaskSplitting = Enable::kDefault;
 
@@ -218,8 +242,8 @@ struct SK_API GrContextOptions {
     ShaderErrorHandler* fShaderErrorHandler = nullptr;
 
     /**
-     * Specifies the number of samples Ganesh should use when performing internal draws with MSAA or
-     * mixed samples (hardware capabilities permitting).
+     * Specifies the number of samples Ganesh should use when performing internal draws with MSAA
+     * (hardware capabilities permitting).
      *
      * If 0, Ganesh will disable internal code paths that use multisampling.
      */
@@ -236,16 +260,31 @@ struct SK_API GrContextOptions {
      */
     int fMaxCachedVulkanSecondaryCommandBuffers = -1;
 
+    /**
+     * If true, the caps will never support mipmaps.
+     */
+    bool fSuppressMipmapSupport = false;
+
+    /**
+     * If true, and if supported, enables hardware tessellation in the caps.
+     */
+    bool fEnableExperimentalHardwareTessellation = false;
+
+    /**
+     * Uses a reduced variety of shaders. May perform less optimally in steady state but can reduce
+     * jank due to shader compilations.
+     */
+    bool fReducedShaderVariations = false;
+
 #if GR_TEST_UTILS
     /**
      * Private options that are only meant for testing within Skia's tools.
      */
 
     /**
-     * If non-zero, overrides the maximum size of a tile for sw-backed images and bitmaps rendered
-     * by SkGpuDevice.
+     * Experimental: Should the new version of the GPU backend be used?
      */
-    int  fMaxTileSizeOverride = 0;
+    Enable fUseSkGpuV2 = Enable::kDefault;
 
     /**
      * Prevents use of dual source blending, to test that all xfer modes work correctly without it.
@@ -253,14 +292,15 @@ struct SK_API GrContextOptions {
     bool fSuppressDualSourceBlending = false;
 
     /**
-     * If true, the caps will never support geometry shaders.
+     * Prevents the use of non-coefficient-based blend equations, for testing dst reads, barriers,
+     * and in-shader blending.
      */
-    bool fSuppressGeometryShaders = false;
+    bool fSuppressAdvancedBlendEquations = false;
 
     /**
-     * If true, the caps will never support tessellation shaders.
+     * Prevents the use of framebuffer fetches, for testing dst reads and texture barriers.
      */
-    bool fSuppressTessellationShaders = false;
+    bool fSuppressFramebufferFetch = false;
 
     /**
      * If greater than zero and less than the actual hardware limit, overrides the maximum number of
@@ -289,9 +329,32 @@ struct SK_API GrContextOptions {
     bool fRandomGLOOM = false;
 
     /**
+     * Force off support for write/transfer pixels row bytes in caps.
+     */
+    bool fDisallowWriteAndTransferPixelRowBytes = false;
+
+    /**
      * Include or exclude specific GPU path renderers.
      */
     GpuPathRenderers fGpuPathRenderers = GpuPathRenderers::kDefault;
+
+    /**
+     * Specify the GPU resource cache limit. Equivalent to calling `setResourceCacheLimit` on the
+     * context at construction time.
+     *
+     * A value of -1 means use the default limit value.
+     */
+    int fResourceCacheLimitOverride = -1;
+
+    /**
+     * If true, then always try to use hardware tessellation, regardless of how small a path may be.
+     */
+    bool fAlwaysPreferHardwareTessellation = false;
+
+    /**
+     * Maximum width and height of internal texture atlases.
+     */
+    int  fMaxTextureAtlasSize = 2048;
 #endif
 
     GrDriverBugWorkarounds fDriverBugWorkarounds;

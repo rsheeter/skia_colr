@@ -5,19 +5,22 @@
  * found in the LICENSE file.
  */
 
+#include "src/gpu/mock/GrMockGpu.h"
+
+#include "src/gpu/GrThreadSafePipelineBuilder.h"
+#include "src/gpu/mock/GrMockAttachment.h"
 #include "src/gpu/mock/GrMockBuffer.h"
 #include "src/gpu/mock/GrMockCaps.h"
-#include "src/gpu/mock/GrMockGpu.h"
 #include "src/gpu/mock/GrMockOpsRenderPass.h"
-#include "src/gpu/mock/GrMockStencilAttachment.h"
 #include "src/gpu/mock/GrMockTexture.h"
+
 #include <atomic>
 
 int GrMockGpu::NextInternalTextureID() {
     static std::atomic<int> nextID{1};
     int id;
     do {
-        id = nextID.fetch_add(1);
+        id = nextID.fetch_add(1, std::memory_order_relaxed);
     } while (0 == id);  // Reserve 0 for an invalid ID.
     return id;
 }
@@ -26,21 +29,21 @@ int GrMockGpu::NextExternalTextureID() {
     // We use negative ints for the "testing only external textures" so they can easily be
     // identified when debugging.
     static std::atomic<int> nextID{-1};
-    return nextID--;
+    return nextID.fetch_add(-1, std::memory_order_relaxed);
 }
 
 int GrMockGpu::NextInternalRenderTargetID() {
     // We start off with large numbers to differentiate from texture IDs, even though they're
     // technically in a different space.
     static std::atomic<int> nextID{SK_MaxS32};
-    return nextID--;
+    return nextID.fetch_add(-1, std::memory_order_relaxed);
 }
 
 int GrMockGpu::NextExternalRenderTargetID() {
     // We use large negative ints for the "testing only external render targets" so they can easily
     // be identified when debugging.
     static std::atomic<int> nextID{SK_MinS32};
-    return nextID++;
+    return nextID.fetch_add(1, std::memory_order_relaxed);
 }
 
 sk_sp<GrGpu> GrMockGpu::Make(const GrMockOptions* mockOptions,
@@ -52,13 +55,15 @@ sk_sp<GrGpu> GrMockGpu::Make(const GrMockOptions* mockOptions,
     return sk_sp<GrGpu>(new GrMockGpu(direct, *mockOptions, contextOptions));
 }
 
-GrOpsRenderPass* GrMockGpu::getOpsRenderPass(
-                                GrRenderTarget* rt, GrStencilAttachment*,
-                                GrSurfaceOrigin origin, const SkIRect& bounds,
-                                const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
-                                const GrOpsRenderPass::StencilLoadAndStoreInfo&,
-                                const SkTArray<GrSurfaceProxy*, true>& sampledProxies,
-                                GrXferBarrierFlags renderPassXferBarriers) {
+GrOpsRenderPass* GrMockGpu::onGetOpsRenderPass(GrRenderTarget* rt,
+                                               bool /*useMSAASurface*/,
+                                               GrAttachment*,
+                                               GrSurfaceOrigin origin,
+                                               const SkIRect& bounds,
+                                               const GrOpsRenderPass::LoadAndStoreInfo& colorInfo,
+                                               const GrOpsRenderPass::StencilLoadAndStoreInfo&,
+                                               const SkTArray<GrSurfaceProxy*,true>& sampledProxies,
+                                               GrXferBarrierFlags renderPassXferBarriers) {
     return new GrMockOpsRenderPass(this, rt, origin, colorInfo);
 }
 
@@ -73,64 +78,17 @@ GrMockGpu::GrMockGpu(GrDirectContext* direct, const GrMockOptions& options,
                      const GrContextOptions& contextOptions)
         : INHERITED(direct)
         , fMockOptions(options) {
-    fCaps.reset(new GrMockCaps(contextOptions, options));
+    this->initCapsAndCompiler(sk_make_sp<GrMockCaps>(contextOptions, options));
 }
 
-void GrMockGpu::querySampleLocations(GrRenderTarget* rt, SkTArray<SkPoint>* sampleLocations) {
-    sampleLocations->reset();
-    int numRemainingSamples = rt->numSamples();
-    while (numRemainingSamples > 0) {
-        // Use standard D3D sample locations.
-        switch (numRemainingSamples) {
-            case 0:
-            case 1:
-                sampleLocations->push_back().set(.5, .5);
-                break;
-            case 2:
-                sampleLocations->push_back().set(.75, .75);
-                sampleLocations->push_back().set(.25, .25);
-                break;
-            case 3:
-            case 4:
-                sampleLocations->push_back().set(.375, .125);
-                sampleLocations->push_back().set(.875, .375);
-                sampleLocations->push_back().set(.125, .625);
-                sampleLocations->push_back().set(.625, .875);
-                break;
-            case 5:
-            case 6:
-            case 7:
-            case 8:
-                sampleLocations->push_back().set(.5625, .3125);
-                sampleLocations->push_back().set(.4375, .6875);
-                sampleLocations->push_back().set(.8125, .5625);
-                sampleLocations->push_back().set(.3125, .1875);
-                sampleLocations->push_back().set(.1875, .8125);
-                sampleLocations->push_back().set(.0625, .4375);
-                sampleLocations->push_back().set(.6875, .4375);
-                sampleLocations->push_back().set(.4375, .0625);
-                break;
-            default:
-                sampleLocations->push_back().set(.5625, .5625);
-                sampleLocations->push_back().set(.4375, .3125);
-                sampleLocations->push_back().set(.3125, .6250);
-                sampleLocations->push_back().set(.2500, .4375);
-                sampleLocations->push_back().set(.1875, .3750);
-                sampleLocations->push_back().set(.6250, .8125);
-                sampleLocations->push_back().set(.8125, .6875);
-                sampleLocations->push_back().set(.6875, .1875);
-                sampleLocations->push_back().set(.3750, .8750);
-                sampleLocations->push_back().set(.5000, .0625);
-                sampleLocations->push_back().set(.2500, .1250);
-                sampleLocations->push_back().set(.1250, .2500);
-                sampleLocations->push_back().set(.0000, .5000);
-                sampleLocations->push_back().set(.4375, .2500);
-                sampleLocations->push_back().set(.8750, .4375);
-                sampleLocations->push_back().set(.0625, .0000);
-                break;
-        }
-        numRemainingSamples = rt->numSamples() - sampleLocations->count();
-    }
+GrMockGpu::~GrMockGpu() {}
+
+GrThreadSafePipelineBuilder* GrMockGpu::pipelineBuilder() {
+    return nullptr;
+}
+
+sk_sp<GrThreadSafePipelineBuilder> GrMockGpu::refPipelineBuilder() {
+    return nullptr;
 }
 
 sk_sp<GrTexture> GrMockGpu::onCreateTexture(SkISize dimensions,
@@ -247,30 +205,17 @@ sk_sp<GrRenderTarget> GrMockGpu::onWrapBackendRenderTarget(const GrBackendRender
                                                         isProtected, info));
 }
 
-sk_sp<GrRenderTarget> GrMockGpu::onWrapBackendTextureAsRenderTarget(const GrBackendTexture& tex,
-                                                                    int sampleCnt) {
-    GrMockTextureInfo texInfo;
-    SkAssertResult(tex.getMockTextureInfo(&texInfo));
-    SkASSERT(texInfo.compressionType() == SkImage::CompressionType::kNone);
-
-    // The client gave us the texture ID but we supply the render target ID.
-    GrMockRenderTargetInfo rtInfo(texInfo.colorType(), NextInternalRenderTargetID());
-
-    auto isProtected = GrProtected(tex.isProtected());
-    return sk_sp<GrRenderTarget>(new GrMockRenderTarget(
-            this, GrMockRenderTarget::kWrapped, tex.dimensions(), sampleCnt, isProtected, rtInfo));
-}
-
 sk_sp<GrGpuBuffer> GrMockGpu::onCreateBuffer(size_t sizeInBytes, GrGpuBufferType type,
                                              GrAccessPattern accessPattern, const void*) {
     return sk_sp<GrGpuBuffer>(new GrMockBuffer(this, sizeInBytes, type, accessPattern));
 }
 
-GrStencilAttachment* GrMockGpu::createStencilAttachmentForRenderTarget(
-        const GrRenderTarget* rt, SkISize dimensions, int numStencilSamples) {
-    SkASSERT(numStencilSamples == rt->numSamples());
+sk_sp<GrAttachment> GrMockGpu::makeStencilAttachment(const GrBackendFormat& /*colorFormat*/,
+                                                     SkISize dimensions, int numStencilSamples) {
     fStats.incStencilAttachmentCreates();
-    return new GrMockStencilAttachment(this, dimensions, rt->numSamples());
+    return sk_sp<GrAttachment>(
+            new GrMockAttachment(this, dimensions, GrAttachment::UsageFlags::kStencilAttachment,
+                                 numStencilSamples));
 }
 
 GrBackendTexture GrMockGpu::onCreateBackendTexture(SkISize dimensions,
@@ -284,7 +229,7 @@ GrBackendTexture GrMockGpu::onCreateBackendTexture(SkISize dimensions,
     }
 
     auto colorType = format.asMockColorType();
-    if (!this->caps()->isFormatTexturable(format)) {
+    if (!this->caps()->isFormatTexturable(format, GrTextureType::k2D)) {
         return GrBackendTexture();  // invalid
     }
 
@@ -302,7 +247,7 @@ GrBackendTexture GrMockGpu::onCreateCompressedBackendTexture(
         return {}; // should go through onCreateBackendTexture
     }
 
-    if (!this->caps()->isFormatTexturable(format)) {
+    if (!this->caps()->isFormatTexturable(format, GrTextureType::k2D)) {
         return {};
     }
 

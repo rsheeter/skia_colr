@@ -7,16 +7,18 @@
 
 #include "include/gpu/GrDirectContext.h"
 #include "include/gpu/GrRecordingContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrColorSpaceXform.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
-#include "src/gpu/ops/GrTextureOp.h"
-#include "src/gpu/ops/GrTextureOp.h"
+#include "src/gpu/geometry/GrQuad.h"
+#include "src/gpu/ops/OpsTask.h"
+#include "src/gpu/ops/TextureOp.h"
 #include "tests/Test.h"
 
 class OpsTaskTestingAccess {
 public:
-    typedef GrOpsTask::OpChain OpChain;
+    typedef skgpu::v1::OpsTask::OpChain OpChain;
 };
 
 static void check_chain(OpsTaskTestingAccess::OpChain* chain, SkRect firstRect, SkRect lastRect,
@@ -47,27 +49,27 @@ static sk_sp<GrSurfaceProxy> create_proxy(GrRecordingContext* rContext) {
             SkBudgeted::kNo, GrProtected::kNo, GrInternalSurfaceFlags::kNone);
 }
 
-static std::unique_ptr<GrDrawOp> create_op(GrDirectContext* dContext, SkRect rect,
-                                           const GrSurfaceProxyView& proxyView, bool isAA) {
+static GrOp::Owner create_op(GrDirectContext* dContext, SkRect rect,
+                             const GrSurfaceProxyView& proxyView, bool isAA) {
     DrawQuad quad;
 
     quad.fDevice = GrQuad::MakeFromRect(rect.makeOutset(0.5f, 0.5f),  SkMatrix::I());
     quad.fLocal = GrQuad(rect);
     quad.fEdgeFlags = isAA ? GrQuadAAFlags::kAll : GrQuadAAFlags::kNone;
 
-    return GrTextureOp::Make(dContext,
-                             proxyView,
-                             kPremul_SkAlphaType,
-                             nullptr,
-                             GrSamplerState::Filter::kNearest,
-                             GrSamplerState::MipmapMode::kNone,
-                             {1.f, 1.f, 1.f, 1.f},
-                             GrTextureOp::Saturate::kYes,
-                             SkBlendMode::kSrcOver,
-                             isAA ? GrAAType::kCoverage
-                                  : GrAAType::kNone,
-                             &quad,
-                             nullptr);
+    return skgpu::v1::TextureOp::Make(dContext,
+                                      proxyView,
+                                      kPremul_SkAlphaType,
+                                      nullptr,
+                                      GrSamplerState::Filter::kNearest,
+                                      GrSamplerState::MipmapMode::kNone,
+                                      {1.f, 1.f, 1.f, 1.f},
+                                      skgpu::v1::TextureOp::Saturate::kYes,
+                                      SkBlendMode::kSrcOver,
+                                      isAA ? GrAAType::kCoverage
+                                           : GrAAType::kNone,
+                                      &quad,
+                                      nullptr);
 }
 
 // This unit test exercises the crbug.com/1112259 case.
@@ -75,7 +77,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(TextureOpTest, reporter, ctxInfo) {
 
     GrDirectContext* dContext = ctxInfo.directContext();
     const GrCaps* caps = dContext->priv().caps();
-    GrRecordingContext::Arenas arenas = dContext->priv().arenas();
+    SkArenaAlloc arena{nullptr, 0, 1024};
     auto auditTrail = dContext->priv().auditTrail();
 
     if (!caps->dynamicStateArrayGeometryProcessorTextureSupport()) {
@@ -99,35 +101,35 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(TextureOpTest, reporter, ctxInfo) {
     static const SkRect kOpDRect{ 32, 32, 48, 48 };
 
     // opA & opB can chain together but can't merge bc they have different proxies
-    std::unique_ptr<GrDrawOp> opA = create_op(dContext, kOpARect, proxyViewA, false);
-    std::unique_ptr<GrDrawOp> opB = create_op(dContext, kOpBRect, proxyViewB, false);
+    GrOp::Owner opA = create_op(dContext, kOpARect, proxyViewA, false);
+    GrOp::Owner opB = create_op(dContext, kOpBRect, proxyViewB, false);
 
     GrAppliedClip noClip = GrAppliedClip::Disabled();
     OpsTaskTestingAccess::OpChain chain1(std::move(opA), GrProcessorSet::EmptySetAnalysis(),
                                          &noClip, nullptr);
     chain1.appendOp(std::move(opB), GrProcessorSet::EmptySetAnalysis(), nullptr, &noClip, *caps,
-                    &arenas, dContext->priv().auditTrail());
+                    &arena, dContext->priv().auditTrail());
     check_chain(&chain1, kOpARect, kOpBRect, 2);
 
     // opC & opD can also chain together but can't merge (bc, again, they have different
     // proxies). Note, however, that opA and opD do share a proxy so can be merged if opA's
     // anti-aliasing is upgraded to coverage.
-    std::unique_ptr<GrDrawOp> opC = create_op(dContext, kOpCRect, proxyViewC, true);
-    std::unique_ptr<GrDrawOp> opD = create_op(dContext, kOpDRect, proxyViewA, true);
+    GrOp::Owner opC = create_op(dContext, kOpCRect, proxyViewC, true);
+    GrOp::Owner opD = create_op(dContext, kOpDRect, proxyViewA, true);
 
     OpsTaskTestingAccess::OpChain chain2(std::move(opC), GrProcessorSet::EmptySetAnalysis(),
                                          &noClip, nullptr);
     chain2.appendOp(std::move(opD), GrProcessorSet::EmptySetAnalysis(), nullptr, &noClip, *caps,
-                    &arenas, auditTrail);
+                    &arena, auditTrail);
     check_chain(&chain2, kOpCRect, kOpDRect, 2);
 
     // opA and opD, now in separate chains, can merge when the two chains are combined while
     // opB and opC can still only chain.
-    chain1.prependChain(&chain2, *caps, &arenas, auditTrail);
+    chain1.prependChain(&chain2, *caps, &arena, auditTrail);
 
     // We should end up with the chain
     //   opC - opD/opA - opB
     check_chain(&chain1, kOpCRect, kOpBRect, 3);
 
-    chain1.deleteOps(arenas.opMemoryPool());
+    chain1.deleteOps();
 }

@@ -11,6 +11,7 @@
 #include "include/core/SkStream.h"
 #include "include/core/SkSurface.h"
 #include "include/encode/SkPngEncoder.h"
+#include "include/private/SkTPin.h"
 #include "modules/skottie/include/Skottie.h"
 #include "modules/skottie/utils/SkottieUtils.h"
 #include "modules/skresources/include/SkResources.h"
@@ -213,7 +214,7 @@ public:
     }
 
     void report() const {
-        SkDebugf("Animation loaded with %lu error%s, %lu warning%s.\n",
+        SkDebugf("Animation loaded with %zu error%s, %zu warning%s.\n",
                  fErrors.size(), fErrors.size() == 1 ? "" : "s",
                  fWarnings.size(), fWarnings.size() == 1 ? "" : "s");
 
@@ -288,9 +289,9 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const auto scale_matrix = SkMatrix::MakeRectToRect(SkRect::MakeSize(anim->size()),
-                                                       SkRect::MakeIWH(FLAGS_width, FLAGS_height),
-                                                       SkMatrix::kCenter_ScaleToFit);
+    const auto scale_matrix = SkMatrix::RectToRect(SkRect::MakeSize(anim->size()),
+                                                   SkRect::MakeIWH(FLAGS_width, FLAGS_height),
+                                                   SkMatrix::kCenter_ScaleToFit);
     logger->report();
 
     const auto t0 = SkTPin(FLAGS_t0, 0.0, 1.0),

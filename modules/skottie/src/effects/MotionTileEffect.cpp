@@ -11,6 +11,7 @@
 #include "include/core/SkPictureRecorder.h"
 #include "include/core/SkShader.h"
 #include "include/effects/SkGradientShader.h"
+#include "include/private/SkTPin.h"
 #include "modules/skottie/src/Adapter.h"
 #include "modules/skottie/src/SkottieValue.h"
 #include "modules/sksg/include/SkSGRenderNode.h"
@@ -78,14 +79,14 @@ protected:
                                             tile_size.width(),
                                             tile_size.height());
 
-        const auto layerShaderMatrix = SkMatrix::MakeRectToRect(
-                    SkRect::MakeWH(fLayerSize.width(), fLayerSize.height()),
-                    tile, SkMatrix::kFill_ScaleToFit);
+        const auto layerShaderMatrix = SkMatrix::RectToRect(
+                    SkRect::MakeWH(fLayerSize.width(), fLayerSize.height()), tile);
 
         const auto tm = fMirrorEdges ? SkTileMode::kMirror : SkTileMode::kRepeat;
-        auto layer_shader = fLayerPicture->makeShader(tm, tm, &layerShaderMatrix);
+        auto layer_shader = fLayerPicture->makeShader(tm, tm, SkFilterMode::kLinear,
+                                                      &layerShaderMatrix, nullptr);
 
-        if (fPhase) {
+        if (fPhase && layer_shader && tile.isFinite()) {
             // To implement AE phase semantics, we construct a mask shader for the pass-through
             // rows/columns.  We then draw the layer content through this mask, and then again
             // through the inverse mask with a phase shift.

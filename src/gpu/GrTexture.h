@@ -40,33 +40,6 @@ public:
                                     GrBackendTexture*,
                                     SkImage::BackendTextureReleaseProc*);
 
-    /** See addIdleProc. */
-    enum class IdleState {
-        kFlushed,
-        kFinished
-    };
-    /**
-     * Installs a proc on this texture. It will be called when the texture becomes "idle". There
-     * are two types of idle states as indicated by IdleState. For managed backends (e.g. GL where
-     * a driver typically handles CPU/GPU synchronization of resource access) there is no difference
-     * between the two. They both mean "all work related to the resource has been flushed to the
-     * backend API and the texture is not owned outside the resource cache".
-     *
-     * If the API is unmanaged (e.g. Vulkan) then kFinished has the additional constraint that the
-     * work flushed to the GPU is finished.
-     */
-    virtual void addIdleProc(sk_sp<GrRefCntedCallback> idleProc, IdleState) {
-        // This is the default implementation for the managed case where the IdleState can be
-        // ignored. Unmanaged backends, e.g. Vulkan, must override this to consider IdleState.
-        fIdleProcs.push_back(std::move(idleProc));
-    }
-    /** Helper version of addIdleProc that creates the ref-counted wrapper. */
-    void addIdleProc(GrRefCntedCallback::Callback callback,
-                     GrRefCntedCallback::Context context,
-                     IdleState state) {
-        this->addIdleProc(sk_make_sp<GrRefCntedCallback>(callback, context), state);
-    }
-
     GrTextureType textureType() const { return fTextureType; }
     bool hasRestrictedSampling() const {
         return GrTextureTypeHasRestrictedSampling(this->textureType());
@@ -95,13 +68,6 @@ protected:
 
     virtual bool onStealBackendTexture(GrBackendTexture*, SkImage::BackendTextureReleaseProc*) = 0;
 
-    SkTArray<sk_sp<GrRefCntedCallback>> fIdleProcs;
-
-    void willRemoveLastRef() override {
-        // We're about to be idle in the resource cache. Do our part to trigger the idle callbacks.
-        fIdleProcs.reset();
-    }
-    virtual void callIdleProcsOnBehalfOfResource() {}
     void computeScratchKey(GrScratchKey*) const override;
 
 private:

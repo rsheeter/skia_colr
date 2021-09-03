@@ -8,8 +8,9 @@
 #ifndef SkShaderBase_DEFINED
 #define SkShaderBase_DEFINED
 
-#include "include/core/SkFilterQuality.h"
 #include "include/core/SkMatrix.h"
+#include "include/core/SkPaint.h"
+#include "include/core/SkSamplingOptions.h"
 #include "include/core/SkShader.h"
 #include "include/private/SkNoncopyable.h"
 #include "src/core/SkEffectPriv.h"
@@ -21,7 +22,6 @@
 #include "src/gpu/GrFPArgs.h"
 #endif
 
-class GrContext;
 class GrFragmentProcessor;
 class SkArenaAlloc;
 class SkColorSpace;
@@ -45,8 +45,10 @@ class SkStageUpdater {
 public:
     virtual ~SkStageUpdater() {}
 
-    virtual bool SK_WARN_UNUSED_RESULT update(const SkMatrix& ctm, const SkMatrix* localM) = 0;
+    virtual bool SK_WARN_UNUSED_RESULT update(const SkMatrix& ctm) = 0;
 };
+
+class SkUpdatableShader;
 
 class SkShaderBase : public SkShader {
 public:
@@ -85,17 +87,20 @@ public:
     struct ContextRec {
         ContextRec(const SkPaint& paint, const SkMatrix& matrix, const SkMatrix* localM,
                    SkColorType dstColorType, SkColorSpace* dstColorSpace)
-            : fPaint(&paint)
-            , fMatrix(&matrix)
+            : fMatrix(&matrix)
             , fLocalMatrix(localM)
             , fDstColorType(dstColorType)
-            , fDstColorSpace(dstColorSpace) {}
+            , fDstColorSpace(dstColorSpace) {
+                fPaintAlpha = paint.getAlpha();
+                fPaintDither = paint.isDither();
+            }
 
-        const SkPaint*  fPaint;            // the current paint associated with the draw
         const SkMatrix* fMatrix;           // the current matrix in the canvas
         const SkMatrix* fLocalMatrix;      // optional local matrix
         SkColorType     fDstColorType;     // the color type of the dest surface
         SkColorSpace*   fDstColorSpace;    // the color space of the dest surface (if any)
+        SkAlpha         fPaintAlpha;
+        bool            fPaintDither;
 
         bool isLegacyCompatible(SkColorSpace* shadersColorSpace) const;
     };
@@ -147,14 +152,14 @@ public:
 
 #if SK_SUPPORT_GPU
     /**
-     *  Returns a GrFragmentProcessor that implements the shader for the GPU backend. NULL is
+     *  Returns a GrFragmentProcessor that implements the shader for the GPU backend. nullptr is
      *  returned if there is no GPU implementation.
      *
      *  The GPU device does not call SkShader::createContext(), instead we pass the view matrix,
      *  local matrix, and filter quality directly.
      *
-     *  The GrContext may be used by the to create textures that are required by the returned
-     *  processor.
+     *  The GrRecordingContext may be used by the to create textures that are required by the
+     *  returned processor.
      *
      *  The returned GrFragmentProcessor should expect an unpremultiplied input color and
      *  produce a premultiplied output.
@@ -192,7 +197,7 @@ public:
 
     virtual SkRuntimeEffect* asRuntimeEffect() const { return nullptr; }
 
-    static Type GetFlattenableType() { return kSkShaderBase_Type; }
+    static Type GetFlattenableType() { return kSkShader_Type; }
     Type getFlattenableType() const override { return GetFlattenableType(); }
 
     static sk_sp<SkShaderBase> Deserialize(const void* data, size_t size,
@@ -208,14 +213,16 @@ public:
      */
     virtual sk_sp<SkShader> makeAsALocalMatrixShader(SkMatrix* localMatrix) const;
 
+    SkUpdatableShader* updatableShader(SkArenaAlloc* alloc) const;
+    virtual SkUpdatableShader* onUpdatableShader(SkArenaAlloc* alloc) const;
+
     SkStageUpdater* appendUpdatableStages(const SkStageRec& rec) const {
         return this->onAppendUpdatableStages(rec);
     }
 
     SK_WARN_UNUSED_RESULT
     skvm::Color program(skvm::Builder*, skvm::Coord device, skvm::Coord local, skvm::Color paint,
-                        const SkMatrixProvider&, const SkMatrix* localM,
-                        SkFilterQuality quality, const SkColorInfo& dst,
+                        const SkMatrixProvider&, const SkMatrix* localM, const SkColorInfo& dst,
                         skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const;
 
 protected:
@@ -252,10 +259,19 @@ private:
     virtual skvm::Color onProgram(skvm::Builder*,
                                   skvm::Coord device, skvm::Coord local, skvm::Color paint,
                                   const SkMatrixProvider&, const SkMatrix* localM,
-                                  SkFilterQuality quality, const SkColorInfo& dst,
-                                  skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const;
+                                  const SkColorInfo& dst, skvm::Uniforms*, SkArenaAlloc*) const = 0;
 
     using INHERITED = SkShader;
+};
+
+class SkUpdatableShader : public SkShaderBase {
+public:
+    virtual bool update(const SkMatrix& ctm) const = 0;
+
+private:
+    // For serialization.  This will never be called.
+    Factory getFactory() const override { return nullptr; }
+    const char* getTypeName() const override { return nullptr; }
 };
 
 inline SkShaderBase* as_SB(SkShader* shader) {

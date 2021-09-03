@@ -10,6 +10,7 @@
 
 #include "include/core/SkPaint.h"
 #include "include/private/SkTArray.h"
+#include "include/private/SkTPin.h"
 #include "tools/sk_app/Window.h"
 
 #include "imgui.h"
@@ -116,6 +117,8 @@ class ImGuiLayer : public sk_app::Window::Layer {
 public:
     ImGuiLayer();
     ~ImGuiLayer() override;
+
+    void setScaleFactor(float scaleFactor);
 
     typedef std::function<void(SkCanvas*)> SkiaWidgetFunc;
     void skiaWidget(const ImVec2& size, SkiaWidgetFunc func);

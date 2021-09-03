@@ -8,9 +8,9 @@
 #ifndef SKSL_FIELD
 #define SKSL_FIELD
 
+#include "include/private/SkSLModifiers.h"
+#include "include/private/SkSLSymbol.h"
 #include "src/sksl/SkSLPosition.h"
-#include "src/sksl/ir/SkSLModifiers.h"
-#include "src/sksl/ir/SkSLSymbol.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVariable.h"
 
@@ -21,30 +21,22 @@ namespace SkSL {
  * whenever a bare reference to an identifier should refer to a struct field; in GLSL, this is the
  * result of declaring anonymous interface blocks.
  */
-class Field : public Symbol {
+class Field final : public Symbol {
 public:
     static constexpr Kind kSymbolKind = Kind::kField;
 
     Field(int offset, const Variable* owner, int fieldIndex)
-    : INHERITED(offset, FieldData{owner->type().fields()[fieldIndex].fName,
-                                  owner->type().fields()[fieldIndex].fType,
-                                  owner,
-                                  fieldIndex}) {}
-
-    const Type& type() const override {
-        return *this->fieldData().fType;
-    }
-
-    StringFragment name() const override {
-        return this->fieldData().fName;
-    }
+        : INHERITED(offset, kSymbolKind, owner->type().fields()[fieldIndex].fName,
+                    owner->type().fields()[fieldIndex].fType)
+        , fOwner(owner)
+        , fFieldIndex(fieldIndex) {}
 
     int fieldIndex() const {
-        return this->fieldData().fFieldIndex;
+        return fFieldIndex;
     }
 
     const Variable& owner() const {
-        return *this->fieldData().fOwner;
+        return *fOwner;
     }
 
     String description() const override {
@@ -52,6 +44,9 @@ public:
     }
 
 private:
+    const Variable* fOwner;
+    int fFieldIndex;
+
     using INHERITED = Symbol;
 };
 

@@ -8,73 +8,78 @@
 #ifndef SKSL_IFSTATEMENT
 #define SKSL_IFSTATEMENT
 
+#include "include/private/SkSLStatement.h"
 #include "src/sksl/ir/SkSLExpression.h"
-#include "src/sksl/ir/SkSLStatement.h"
+
+#include <memory>
 
 namespace SkSL {
 
 /**
  * An 'if' statement.
  */
-struct IfStatement : public Statement {
+class IfStatement final : public Statement {
+public:
     static constexpr Kind kStatementKind = Kind::kIf;
 
     IfStatement(int offset, bool isStatic, std::unique_ptr<Expression> test,
                 std::unique_ptr<Statement> ifTrue, std::unique_ptr<Statement> ifFalse)
-    : INHERITED(offset, IfStatementData{isStatic}) {
-        fExpressionChildren.push_back(std::move(test));
-        fStatementChildren.reserve(2);
-        fStatementChildren.push_back(std::move(ifTrue));
-        fStatementChildren.push_back(std::move(ifFalse));
-    }
+        : INHERITED(offset, kStatementKind)
+        , fTest(std::move(test))
+        , fIfTrue(std::move(ifTrue))
+        , fIfFalse(std::move(ifFalse))
+        , fIsStatic(isStatic) {}
+
+    // Creates a potentially-simplified form of the if-statement. Typechecks and coerces the test
+    // expression; reports errors via ErrorReporter.
+    static std::unique_ptr<Statement> Convert(const Context& context, int offset, bool isStatic,
+                                              std::unique_ptr<Expression> test,
+                                              std::unique_ptr<Statement> ifTrue,
+                                              std::unique_ptr<Statement> ifFalse);
+
+    // Creates a potentially-simplified form of the if-statement; reports errors via ASSERT.
+    static std::unique_ptr<Statement> Make(const Context& context, int offset, bool isStatic,
+                                           std::unique_ptr<Expression> test,
+                                           std::unique_ptr<Statement> ifTrue,
+                                           std::unique_ptr<Statement> ifFalse);
 
     bool isStatic() const {
-        return this->ifStatementData().fIsStatic;
+        return fIsStatic;
     }
 
     std::unique_ptr<Expression>& test() {
-        return this->fExpressionChildren[0];
+        return fTest;
     }
 
     const std::unique_ptr<Expression>& test() const {
-        return this->fExpressionChildren[0];
+        return fTest;
     }
 
     std::unique_ptr<Statement>& ifTrue() {
-        return this->fStatementChildren[0];
+        return fIfTrue;
     }
 
     const std::unique_ptr<Statement>& ifTrue() const {
-        return this->fStatementChildren[0];
+        return fIfTrue;
     }
 
     std::unique_ptr<Statement>& ifFalse() {
-        return this->fStatementChildren[1];
+        return fIfFalse;
     }
 
     const std::unique_ptr<Statement>& ifFalse() const {
-        return this->fStatementChildren[1];
+        return fIfFalse;
     }
 
-    std::unique_ptr<Statement> clone() const override {
-        return std::unique_ptr<Statement>(new IfStatement(fOffset, this->isStatic(),
-                                                          this->test()->clone(),
-                                                          this->ifTrue()->clone(),
-                                                          this->ifFalse() ? this->ifFalse()->clone()
-                                                                          : nullptr));
-    }
+    std::unique_ptr<Statement> clone() const override;
 
-    String description() const override {
-        String result;
-        if (this->isStatic()) {
-            result += "@";
-        }
-        result += "if (" + this->test()->description() + ") " + this->ifTrue()->description();
-        if (this->ifFalse()) {
-            result += " else " + this->ifFalse()->description();
-        }
-        return result;
-    }
+    String description() const override;
+
+private:
+    std::unique_ptr<Expression> fTest;
+    std::unique_ptr<Statement> fIfTrue;
+    std::unique_ptr<Statement> fIfFalse;
+    bool fIsStatic;
 
     using INHERITED = Statement;
 };

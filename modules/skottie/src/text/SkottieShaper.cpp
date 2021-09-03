@@ -10,8 +10,10 @@
 #include "include/core/SkFontMetrics.h"
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkTextBlob.h"
+#include "include/private/SkTPin.h"
 #include "include/private/SkTemplates.h"
 #include "modules/skshaper/include/SkShaper.h"
+#include "modules/skunicode/include/SkUnicode.h"
 #include "src/core/SkTLazy.h"
 #include "src/core/SkTextBlobPriv.h"
 #include "src/utils/SkUTF.h"
@@ -29,8 +31,6 @@ SkRect ComputeBlobBounds(const sk_sp<SkTextBlob>& blob) {
     }
 
     SkAutoSTArray<16, SkRect> glyphBounds;
-
-    SkTextBlobRunIterator it(blob.get());
 
     for (SkTextBlobRunIterator it(blob.get()); !it.done(); it.next()) {
         glyphBounds.reset(SkToInt(it.glyphCount()));
@@ -240,9 +240,10 @@ public:
         const auto shape_width = fDesc.fLinebreak == Shaper::LinebreakPolicy::kExplicit
                                     ? SK_ScalarMax
                                     : fBox.width();
+        const auto shape_ltr   = fDesc.fDirection == Shaper::Direction::kLTR;
 
         fUTF8 = start;
-        fShaper->shape(start, SkToSizeT(end - start), fFont, true, shape_width, this);
+        fShaper->shape(start, SkToSizeT(end - start), fFont, shape_ltr, shape_width, this);
         fUTF8 = nullptr;
     }
 
@@ -394,9 +395,12 @@ Shaper::Result ShapeToFit(const SkString& txt, const Shaper::TextDesc& orig_desc
 
     auto desc = orig_desc;
 
-    float in_scale = 0,                                 // maximum scale that fits inside
-         out_scale = std::numeric_limits<float>::max(), // minimum scale that doesn't fit
-         try_scale = 1;                                 // current probe
+    const auto min_scale = std::max(desc.fMinTextSize / desc.fTextSize, 0.0f),
+               max_scale = std::max(desc.fMaxTextSize / desc.fTextSize, min_scale);
+
+    float in_scale = min_scale,                          // maximum scale that fits inside
+         out_scale = max_scale,                          // minimum scale that doesn't fit
+         try_scale = SkTPin(1.0f, min_scale, max_scale); // current probe
 
     // Perform a binary search for the best vertical fit (SkShaper already handles
     // horizontal fitting), starting with the specified text size.
@@ -414,37 +418,74 @@ Shaper::Result ShapeToFit(const SkString& txt, const Shaper::TextDesc& orig_desc
         SkSize res_size = {0, 0};
         auto res = ShapeImpl(txt, desc, box, fontmgr, &res_size);
 
+        const auto prev_scale = try_scale;
         if (res_size.width() > box.width() || res_size.height() > box.height()) {
             out_scale = try_scale;
-            try_scale = (in_scale == 0)
-                    ? try_scale * 0.5f // initial in_scale not found yet - search exponentially
-                    : (in_scale + out_scale) * 0.5f; // in_scale found - binary search
+            try_scale = (in_scale == min_scale)
+                    // initial in_scale not found yet - search exponentially
+                    ? std::max(min_scale, try_scale * 0.5f)
+                    // in_scale found - binary search
+                    : (in_scale + out_scale) * 0.5f;
         } else {
             // It fits - so it's a candidate.
             best_result = std::move(res);
 
             in_scale = try_scale;
-            try_scale = (out_scale == std::numeric_limits<float>::max())
-                    ? try_scale * 2 // initial out_scale not found yet - search exponentially
-                    : (in_scale + out_scale) * 0.5f; // out_scale found - binary search
+            try_scale = (out_scale == max_scale)
+                    // initial out_scale not found yet - search exponentially
+                    ? std::min(max_scale, try_scale * 2)
+                    // out_scale found - binary search
+                    : (in_scale + out_scale) * 0.5f;
+        }
+
+        if (try_scale == prev_scale) {
+            // no more progress
+            break;
         }
     }
 
     return best_result;
 }
 
+
+// Applies capitalization rules.
+class AdjustedText {
+public:
+    AdjustedText(const SkString& txt, const Shaper::TextDesc& desc)
+        : fText(txt) {
+        switch (desc.fCapitalization) {
+        case Shaper::Capitalization::kNone:
+            break;
+        case Shaper::Capitalization::kUpperCase:
+            if (auto skuni = SkUnicode::Make()) {
+                *fText.writable() = skuni->toUpper(*fText);
+            }
+            break;
+        }
+    }
+
+    operator const SkString&() const { return *fText; }
+
+private:
+    SkTCopyOnFirstWrite<SkString> fText;
+};
+
 } // namespace
 
-Shaper::Result Shaper::Shape(const SkString& txt, const TextDesc& desc, const SkPoint& point,
+Shaper::Result Shaper::Shape(const SkString& orig_txt, const TextDesc& desc, const SkPoint& point,
                              const sk_sp<SkFontMgr>& fontmgr) {
+    const AdjustedText txt(orig_txt, desc);
+
     return (desc.fResize == ResizePolicy::kScaleToFit ||
             desc.fResize == ResizePolicy::kDownscaleToFit) // makes no sense in point mode
             ? Result()
             : ShapeImpl(txt, desc, SkRect::MakeEmpty().makeOffset(point.x(), point.y()), fontmgr);
 }
 
-Shaper::Result Shaper::Shape(const SkString& txt, const TextDesc& desc, const SkRect& box,
+Shaper::Result Shaper::Shape(const SkString& orig_txt, const TextDesc& desc, const SkRect& box,
                              const sk_sp<SkFontMgr>& fontmgr) {
+    const AdjustedText txt(orig_txt, desc);
+
     switch(desc.fResize) {
     case ResizePolicy::kNone:
         return ShapeImpl(txt, desc, box, fontmgr);

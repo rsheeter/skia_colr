@@ -20,6 +20,8 @@ struct DisplayParams {
         , fMSAASampleCount(1)
         , fSurfaceProps(0, kRGB_H_SkPixelGeometry)
         , fDisableVsync(false)
+        , fDelayDrawableAcquisition(false)
+        , fEnableBinaryArchive(false)
     {}
 
     SkColorType         fColorType;
@@ -28,6 +30,8 @@ struct DisplayParams {
     GrContextOptions    fGrContextOptions;
     SkSurfaceProps      fSurfaceProps;
     bool                fDisableVsync;
+    bool                fDelayDrawableAcquisition;
+    bool                fEnableBinaryArchive;
 };
 
 }   // namespace sk_app

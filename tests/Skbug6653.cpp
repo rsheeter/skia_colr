@@ -5,11 +5,12 @@
  * found in the LICENSE file.
  */
 
+#include "include/core/SkBitmap.h"
 #include "include/core/SkCanvas.h"
 #include "include/core/SkSurface.h"
 #include "include/core/SkTypes.h"
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "tests/Test.h"
 
 static SkBitmap read_pixels(sk_sp<SkSurface> surface, SkColor initColor) {
@@ -64,8 +65,7 @@ static void test_bug_6653(GrDirectContext* dContext,
 
         auto s3 = make_surface(dContext);
         s3->getCanvas()->clear(SK_ColorBLUE);
-        SkBitmap b3 = read_pixels(s3, SK_ColorBLACK);
-        s0->getCanvas()->drawBitmap(b3, 0, 0);
+        s0->getCanvas()->drawImage(read_pixels(s3, SK_ColorBLACK).asImage(), 0, 0);
         s3 = nullptr;
 
         auto s4 = make_surface(dContext);

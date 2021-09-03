@@ -13,11 +13,12 @@
 #include "src/gpu/GrCaps.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrRenderTarget.h"
+#include "src/gpu/GrResourceCache.h"
 #include "src/gpu/GrTexture.h"
 
 #ifdef SK_DEBUG
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #endif
 
 void GrTexture::markMipmapsDirty() {
@@ -49,6 +50,9 @@ GrTexture::GrTexture(GrGpu* gpu,
         fMaxMipmapLevel = 0;
     } else {
         fMaxMipmapLevel = SkMipmap::ComputeLevelCount(this->width(), this->height());
+    }
+    if (textureType == GrTextureType::kExternal) {
+        this->setReadOnly();
     }
 }
 

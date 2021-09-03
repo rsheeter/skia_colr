@@ -14,6 +14,22 @@
 class SkReadBuffer;
 class SkWriteBuffer;
 
+#if GR_TEST_UTILS
+namespace skgpu {
+    class SurfaceFillContext;
+#if SK_GPU_V1
+    namespace v1 { class SurfaceDrawContext; }
+#endif // SK_GPU_V1
+}
+#endif // GR_TEST_UTILS
+
+// This declaration must match the one in SkDeferredDisplayList.h
+#if SK_SUPPORT_GPU
+class GrRenderTargetProxy;
+#else
+using GrRenderTargetProxy = SkRefCnt;
+#endif // SK_SUPPORT_GPU
+
 class SkAutoCanvasMatrixPaint : SkNoncopyable {
 public:
     SkAutoCanvasMatrixPaint(SkCanvas*, const SkMatrix*, const SkPaint*, const SkRect& bounds);
@@ -26,10 +42,6 @@ private:
 
 class SkCanvasPriv {
 public:
-    enum {
-        kDontClipToLayer_SaveLayerFlag = SkCanvas::kDontClipToLayer_PrivateSaveLayerFlag,
-    };
-
     // The lattice has pointers directly into the readbuffer
     static bool ReadLattice(SkReadBuffer&, SkCanvas::Lattice*);
 
@@ -39,8 +51,6 @@ public:
     // storage must be 4-byte aligned
     static size_t WriteLattice(void* storage, const SkCanvas::Lattice&);
 
-    static SkCanvas::SaveLayerFlags LegacySaveFlagsToSaveLayerFlags(uint32_t legacySaveFlags);
-
     static int SaveBehind(SkCanvas* canvas, const SkRect* subset) {
         return canvas->only_axis_aligned_saveBehind(subset);
     }
@@ -49,9 +59,17 @@ public:
     }
 
     // Exposed for testing on non-Android framework builds
-    static void ReplaceClip(SkCanvas* canvas, const SkIRect& rect) {
-        canvas->androidFramework_replaceClip(rect);
+    static void ResetClip(SkCanvas* canvas) {
+        canvas->internal_private_resetClip();
     }
+
+#if GR_TEST_UTILS
+#if SK_GPU_V1
+    static skgpu::v1::SurfaceDrawContext* TopDeviceSurfaceDrawContext(SkCanvas*);
+#endif
+    static skgpu::SurfaceFillContext* TopDeviceSurfaceFillContext(SkCanvas*);
+#endif // GR_TEST_UTILS
+    static GrRenderTargetProxy* TopDeviceTargetProxy(SkCanvas*);
 
     // The experimental_DrawEdgeAAImageSet API accepts separate dstClips and preViewMatrices arrays,
     // where entries refer into them, but no explicit size is provided. Given a set of entries,

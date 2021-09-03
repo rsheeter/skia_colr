@@ -1,0 +1,12 @@
+uniform float unknownInput;
+
+void main() {
+    half value = 0.0;
+    switch (int(unknownInput)) {
+        case 0:
+            value = 0.0;
+        case 1:
+            value = 1.0;
+    }
+    sk_FragColor = value.xxxx;
+}

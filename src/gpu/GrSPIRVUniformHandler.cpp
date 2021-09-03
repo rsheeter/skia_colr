@@ -55,6 +55,14 @@ uint32_t grsltype_to_alignment_mask(GrSLType type) {
         case kInt_GrSLType:
         case kUint_GrSLType:
             return 0x3;
+        case kInt2_GrSLType:
+        case kUint2_GrSLType:
+            return 0x7;
+        case kInt3_GrSLType:
+        case kUint3_GrSLType:
+        case kInt4_GrSLType:
+        case kUint4_GrSLType:
+            return 0xF;
         case kHalf_GrSLType: // fall through
         case kFloat_GrSLType:
             return 0x3;
@@ -66,14 +74,6 @@ uint32_t grsltype_to_alignment_mask(GrSLType type) {
             return 0xF;
         case kHalf4_GrSLType: // fall through
         case kFloat4_GrSLType:
-            return 0xF;
-        case kUint2_GrSLType:
-            return 0x7;
-        case kInt2_GrSLType:
-            return 0x7;
-        case kInt3_GrSLType:
-            return 0xF;
-        case kInt4_GrSLType:
             return 0xF;
         case kHalf2x2_GrSLType: // fall through
         case kFloat2x2_GrSLType:
@@ -88,6 +88,9 @@ uint32_t grsltype_to_alignment_mask(GrSLType type) {
         // This query is only valid for certain types.
         case kVoid_GrSLType:
         case kBool_GrSLType:
+        case kBool2_GrSLType:
+        case kBool3_GrSLType:
+        case kBool4_GrSLType:
         case kTexture2DSampler_GrSLType:
         case kTextureExternalSampler_GrSLType:
         case kTexture2DRectSampler_GrSLType:
@@ -129,10 +132,6 @@ static inline uint32_t grsltype_to_size(GrSLType type) {
             return 3 * sizeof(uint16_t);
         case kUShort4_GrSLType:
             return 4 * sizeof(uint16_t);
-        case kInt_GrSLType:
-            return sizeof(int32_t);
-        case kUint_GrSLType:
-            return sizeof(int32_t);
         case kHalf_GrSLType: // fall through
         case kFloat_GrSLType:
             return sizeof(float);
@@ -145,13 +144,17 @@ static inline uint32_t grsltype_to_size(GrSLType type) {
         case kHalf4_GrSLType: // fall through
         case kFloat4_GrSLType:
             return 4 * sizeof(float);
+        case kInt_GrSLType: // fall through
+        case kUint_GrSLType:
+            return sizeof(int32_t);
+        case kInt2_GrSLType: // fall through
         case kUint2_GrSLType:
-            return 2 * sizeof(uint32_t);
-        case kInt2_GrSLType:
             return 2 * sizeof(int32_t);
-        case kInt3_GrSLType:
+        case kInt3_GrSLType: // fall through
+        case kUint3_GrSLType:
             return 3 * sizeof(int32_t);
-        case kInt4_GrSLType:
+        case kInt4_GrSLType: // fall through
+        case kUint4_GrSLType:
             return 4 * sizeof(int32_t);
         case kHalf2x2_GrSLType: // fall through
         case kFloat2x2_GrSLType:
@@ -167,6 +170,9 @@ static inline uint32_t grsltype_to_size(GrSLType type) {
         // This query is only valid for certain types.
         case kVoid_GrSLType:
         case kBool_GrSLType:
+        case kBool2_GrSLType:
+        case kBool3_GrSLType:
+        case kBool4_GrSLType:
         case kTexture2DSampler_GrSLType:
         case kTextureExternalSampler_GrSLType:
         case kTexture2DRectSampler_GrSLType:
@@ -210,12 +216,11 @@ GrGLSLUniformHandler::UniformHandle GrSPIRVUniformHandler::internalAddUniformArr
         bool mangleName,
         int arrayCount,
         const char** outName) {
-    SkString resolvedName;
     char prefix = 'u';
     if ('u' == name[0] || !strncmp(name, GR_NO_MANGLE_PREFIX, strlen(GR_NO_MANGLE_PREFIX))) {
         prefix = '\0';
     }
-    fProgramBuilder->nameVariable(&resolvedName, prefix, name, mangleName);
+    SkString resolvedName = fProgramBuilder->nameVariable(prefix, name, mangleName);
 
     int offset = get_ubo_offset(&fCurrentUBOOffset, type, arrayCount);
     SkString layoutQualifier;
@@ -243,8 +248,7 @@ GrGLSLUniformHandler::SamplerHandle GrSPIRVUniformHandler::addSampler(const GrBa
                                                                      const GrShaderCaps* caps) {
     int binding = fSamplers.count() * 2;
 
-    SkString mangleName;
-    fProgramBuilder->nameVariable(&mangleName, 's', name, true);
+    SkString mangleName = fProgramBuilder->nameVariable('s', name, /*mangle=*/true);
     SkString layoutQualifier;
     layoutQualifier.appendf("set = %d, binding = %d", kSamplerTextureDescriptorSet, binding);
     SPIRVUniformInfo& info = fSamplers.push_back(SPIRVUniformInfo{
@@ -260,8 +264,7 @@ GrGLSLUniformHandler::SamplerHandle GrSPIRVUniformHandler::addSampler(const GrBa
     fSamplerSwizzles.push_back(swizzle);
     SkASSERT(fSamplerSwizzles.count() == fSamplers.count());
 
-    SkString mangleTexName;
-    fProgramBuilder->nameVariable(&mangleTexName, 't', name, true);
+    SkString mangleTexName = fProgramBuilder->nameVariable('t', name, /*mangle=*/true);
     SkString texLayoutQualifier;
     texLayoutQualifier.appendf("set = %d, binding = %d", kSamplerTextureDescriptorSet, binding + 1);
     UniformInfo& texInfo = fTextures.push_back(SPIRVUniformInfo{
@@ -315,7 +318,7 @@ void GrSPIRVUniformHandler::appendUniformDecls(GrShaderFlags visibility, SkStrin
     }
 }
 
-uint32_t GrSPIRVUniformHandler::getRTHeightOffset() const {
-    uint32_t dummy = fCurrentUBOOffset;
-    return get_ubo_offset(&dummy, kFloat_GrSLType, 0);
+uint32_t GrSPIRVUniformHandler::getRTFlipOffset() const {
+    uint32_t currentOffset = fCurrentUBOOffset;
+    return get_ubo_offset(&currentOffset, kFloat2_GrSLType, 0);
 }

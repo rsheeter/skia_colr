@@ -15,10 +15,8 @@
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/effects/GrSkSLFP.h"
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
 GrImageContext::GrImageContext(sk_sp<GrContextThreadSafeProxy> proxy)
             : INHERITED(std::move(proxy)) {
-    fProxyProvider = std::make_unique<GrProxyProvider>(this);
 }
 
 GrImageContext::~GrImageContext() {}
@@ -31,7 +29,6 @@ bool GrImageContext::abandoned() {
     return fThreadSafeProxy->priv().abandoned();
 }
 
-///////////////////////////////////////////////////////////////////////////////////////////////////
-sk_sp<const GrCaps> GrImageContextPriv::refCaps() const {
-    return fContext->refCaps();
+sk_sp<GrImageContext> GrImageContext::MakeForPromiseImage(sk_sp<GrContextThreadSafeProxy> tsp) {
+    return sk_sp<GrImageContext>(new GrImageContext(std::move(tsp)));
 }

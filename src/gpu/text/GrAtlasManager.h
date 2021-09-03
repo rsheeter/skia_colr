@@ -14,6 +14,8 @@
 #include "src/gpu/GrProxyProvider.h"
 
 class GrGlyph;
+class GrResourceProvider;
+class SkGlyph;
 class GrTextStrike;
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -48,11 +50,11 @@ public:
 
     // If bilerpPadding == true then addGlyphToAtlas adds a 1 pixel border to the glyph before
     // inserting it into the atlas.
-    GrDrawOpAtlas::ErrorCode addGlyphToAtlas(const SkGlyph& skGlyph,
-                                             GrGlyph* grGlyph,
+    GrDrawOpAtlas::ErrorCode addGlyphToAtlas(const SkGlyph&,
+                                             GrGlyph*,
                                              int srcPadding,
-                                             GrResourceProvider* resourceProvider,
-                                             GrDeferredUploadTarget* uploadTarget,
+                                             GrResourceProvider*,
+                                             GrDeferredUploadTarget*,
                                              bool bilerpPadding = false);
 
     // To ensure the GrDrawOpAtlas does not evict the Glyph Mask from its texture backing store,
@@ -83,7 +85,7 @@ public:
 
     // GrOnFlushCallbackObject overrides
 
-    void preFlush(GrOnFlushResourceProvider* onFlushRP, const uint32_t*, int) override {
+    void preFlush(GrOnFlushResourceProvider* onFlushRP, SkSpan<const uint32_t>) override {
         for (int i = 0; i < kMaskFormatCount; ++i) {
             if (fAtlases[i]) {
                 fAtlases[i]->instantiate(onFlushRP);
@@ -91,8 +93,7 @@ public:
         }
     }
 
-    void postFlush(GrDeferredUploadToken startTokenForNextFlush,
-                   const uint32_t* opsTaskIDs, int numOpsTaskIDs) override {
+    void postFlush(GrDeferredUploadToken startTokenForNextFlush, SkSpan<const uint32_t>) override {
         for (int i = 0; i < kMaskFormatCount; ++i) {
             if (fAtlases[i]) {
                 fAtlases[i]->compact(startTokenForNextFlush);

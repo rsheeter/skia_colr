@@ -12,6 +12,8 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkTypeface.h"
 
+#include <vector>
+
 class SkMatrix;
 class SkPaint;
 class SkPath;
@@ -338,8 +340,8 @@ public:
 
     /** Returns the advance width of text.
         The advance is the normal distance to move before drawing additional text.
-        Returns the bounding box of text if bounds is not nullptr. paint
-        stroke width or SkPathEffect may modify the advance with.
+        Returns the bounding box of text if bounds is not nullptr. The paint
+        stroke settings, mask filter, or path effect may modify the bounds.
 
         @param text        character storage encoded with SkTextEncoding
         @param byteLength  length of character storage in bytes
@@ -432,6 +434,20 @@ public:
      */
     void getXPos(const SkGlyphID glyphs[], int count, SkScalar xpos[], SkScalar origin = 0) const;
 
+    /** Returns intervals [start, end] describing lines parallel to the advance that intersect
+     *  with the glyphs.
+     *
+     *  @param glyphs   the glyphs to intersect
+     *  @param count    the number of glyphs and positions
+     *  @param pos      the position of each glyph
+     *  @param top      the top of the line intersecting
+     *  @param bottom   the bottom of the line intersecting
+        @return         array of pairs of x values [start, end]. May be empty.
+     */
+    std::vector<SkScalar> getIntercepts(const SkGlyphID glyphs[], int count, const SkPoint pos[],
+                                        SkScalar top, SkScalar bottom,
+                                        const SkPaint* = nullptr) const;
+
     /** Modifies path to be the outline of the glyph.
         If the glyph has an outline, modifies path to be the glyph's outline and returns true.
         The glyph outline may be empty. Degenerate contours in the glyph outline will be skipped.
@@ -510,11 +526,8 @@ private:
     SkScalar setupForAsPaths(SkPaint*);
     bool hasSomeAntiAliasing() const;
 
-    friend class GrSDFTSubRun;
-    friend class GrTextBlob;
     friend class SkFontPriv;
     friend class SkGlyphRunListPainter;
-    friend class SkTextBlobCacheDiffCanvas;
     friend class SkStrikeSpec;
 };
 

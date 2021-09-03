@@ -8,11 +8,11 @@
 #include "src/gpu/ops/GrSimpleMeshDrawOpHelperWithStencil.h"
 
 GrSimpleMeshDrawOpHelperWithStencil::GrSimpleMeshDrawOpHelperWithStencil(
-                                                    const MakeArgs& args,
+                                                    GrProcessorSet* processorSet,
                                                     GrAAType aaType,
                                                     const GrUserStencilSettings* stencilSettings,
                                                     InputFlags inputFlags)
-        : INHERITED(args, aaType, inputFlags)
+        : INHERITED(processorSet, aaType, inputFlags)
         , fStencilSettings(stencilSettings ? stencilSettings : &GrUserStencilSettings::kUnused) {}
 
 GrDrawOp::FixedFunctionFlags GrSimpleMeshDrawOpHelperWithStencil::fixedFunctionFlags() const {
@@ -24,12 +24,10 @@ GrDrawOp::FixedFunctionFlags GrSimpleMeshDrawOpHelperWithStencil::fixedFunctionF
 }
 
 GrProcessorSet::Analysis GrSimpleMeshDrawOpHelperWithStencil::finalizeProcessors(
-        const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
-        GrClampType clampType, GrProcessorAnalysisCoverage geometryCoverage,
-        SkPMColor4f* geometryColor, bool* wideColor) {
+        const GrCaps& caps, const GrAppliedClip* clip, GrClampType clampType,
+        GrProcessorAnalysisCoverage geometryCoverage, SkPMColor4f* geometryColor, bool* wideColor) {
     GrProcessorAnalysisColor color = *geometryColor;
-    auto result = this->finalizeProcessors(
-            caps, clip, hasMixedSampledCoverage, clampType, geometryCoverage, &color);
+    auto result = this->finalizeProcessors(caps, clip, clampType, geometryCoverage, &color);
     color.isConstant(geometryColor);
     if (wideColor) {
         *wideColor = !geometryColor->fitsInBytes();
@@ -47,21 +45,25 @@ bool GrSimpleMeshDrawOpHelperWithStencil::isCompatible(
 GrProgramInfo* GrSimpleMeshDrawOpHelperWithStencil::createProgramInfoWithStencil(
                                             const GrCaps* caps,
                                             SkArenaAlloc* arena,
-                                            const GrSurfaceProxyView* writeViewSwizzle,
+                                            const GrSurfaceProxyView& writeView,
+                                            bool usesMSAASurface,
                                             GrAppliedClip&& appliedClip,
-                                            const GrXferProcessor::DstProxyView& dstProxyView,
+                                            const GrDstProxyView& dstProxyView,
                                             GrGeometryProcessor* gp,
                                             GrPrimitiveType primType,
-                                            GrXferBarrierFlags renderPassXferBarriers) {
+                                            GrXferBarrierFlags renderPassXferBarriers,
+                                            GrLoadOp colorLoadOp) {
     return CreateProgramInfo(caps,
                              arena,
-                             writeViewSwizzle,
+                             writeView,
+                             usesMSAASurface,
                              std::move(appliedClip),
                              dstProxyView,
                              gp,
                              this->detachProcessorSet(),
                              primType,
                              renderPassXferBarriers,
+                             colorLoadOp,
                              this->pipelineFlags(),
                              this->stencilSettings());
 }

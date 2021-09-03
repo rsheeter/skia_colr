@@ -8,131 +8,93 @@
 #ifndef SKSL_VARIABLE
 #define SKSL_VARIABLE
 
+#include "include/private/SkSLModifiers.h"
+#include "include/private/SkSLSymbol.h"
 #include "src/sksl/SkSLPosition.h"
-#include "src/sksl/ir/SkSLModifiers.h"
-#include "src/sksl/ir/SkSLSymbol.h"
+#include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLVariableReference.h"
 
 namespace SkSL {
 
 class Expression;
+class VarDeclaration;
+
+namespace dsl {
+class DSLCore;
+class DSLFunction;
+} // namespace dsl
+
+enum class VariableStorage : int8_t {
+    kGlobal,
+    kInterfaceBlock,
+    kLocal,
+    kParameter
+};
 
 /**
  * Represents a variable, whether local, global, or a function parameter. This represents the
  * variable itself (the storage location), which is shared between all VariableReferences which
  * read or write that storage location.
  */
-class Variable : public Symbol {
+class Variable final : public Symbol {
 public:
+    using Storage = VariableStorage;
+
     static constexpr Kind kSymbolKind = Kind::kVariable;
 
-    enum Storage {
-        kGlobal_Storage,
-        kInterfaceBlock_Storage,
-        kLocal_Storage,
-        kParameter_Storage
-    };
+    Variable(int offset, const Modifiers* modifiers, skstd::string_view name, const Type* type,
+             bool builtin, Storage storage)
+    : INHERITED(offset, kSymbolKind, name, type)
+    , fModifiers(modifiers)
+    , fStorage(storage)
+    , fBuiltin(builtin) {}
 
-    Variable(int offset, ModifiersPool::Handle modifiers, StringFragment name, const Type* type,
-             bool builtin, Storage storage, const Expression* initialValue = nullptr)
-    : INHERITED(offset, VariableData{name, type, initialValue, modifiers, /*readCount=*/0,
-                                     /*writeCount=*/(int16_t) (initialValue ? 1 : 0),
-                                     (int8_t) storage, builtin}) {}
-
-    ~Variable() override {
-        // can't destroy a variable while there are remaining references to it
-        if (this->initialValue()) {
-            --this->variableData().fWriteCount;
-        }
-        SkASSERT(!this->variableData().fReadCount && !this->variableData().fWriteCount);
-    }
-
-    const Type& type() const override {
-        return *this->variableData().fType;
-    }
+    ~Variable() override;
 
     const Modifiers& modifiers() const {
-        return *this->variableData().fModifiersHandle;
+        return *fModifiers;
     }
 
-    const ModifiersPool::Handle& modifiersHandle() const {
-        return this->variableData().fModifiersHandle;
-    }
-
-    void setModifiersHandle(const ModifiersPool::Handle& handle) {
-        this->variableData().fModifiersHandle = handle;
+    void setModifiers(const Modifiers* modifiers) {
+        fModifiers = modifiers;
     }
 
     bool isBuiltin() const {
-        return this->variableData().fBuiltin;
+        return fBuiltin;
     }
 
     Storage storage() const {
-        return (Storage) this->variableData().fStorage;
+        return (Storage) fStorage;
     }
 
-    const Expression* initialValue() const {
-        return this->variableData().fInitialValue;
+    const Expression* initialValue() const;
+
+    void setDeclaration(VarDeclaration* declaration) {
+        SkASSERT(!fDeclaration);
+        fDeclaration = declaration;
     }
 
-    void setInitialValue(const Expression* initialValue) {
-        SkASSERT(!this->initialValue());
-        SkASSERT(this->variableData().fWriteCount == 0);
-        this->variableData().fInitialValue = initialValue;
-        ++this->variableData().fWriteCount;
-    }
-
-    int readCount() const {
-        return this->variableData().fReadCount;
-    }
-
-    int writeCount() const {
-        return this->variableData().fWriteCount;
-    }
-
-    StringFragment name() const override {
-        return this->variableData().fName;
+    void detachDeadVarDeclaration() const {
+        // The VarDeclaration is being deleted, so our reference to it has become stale.
+        // This variable is now dead, so it shouldn't matter that we are modifying its symbol.
+        const_cast<Variable*>(this)->fDeclaration = nullptr;
     }
 
     String description() const override {
         return this->modifiers().description() + this->type().name() + " " + this->name();
     }
 
-    bool dead() const {
-        const VariableData& data = this->variableData();
-        const Modifiers& modifiers = this->modifiers();
-        if ((data.fStorage != kLocal_Storage && this->variableData().fReadCount) ||
-            (modifiers.fFlags & (Modifiers::kIn_Flag | Modifiers::kOut_Flag |
-                                 Modifiers::kUniform_Flag | Modifiers::kVarying_Flag))) {
-            return false;
-        }
-        return !data.fWriteCount ||
-               (!data.fReadCount && !(modifiers.fFlags & (Modifiers::kPLS_Flag |
-                                                          Modifiers::kPLSOut_Flag)));
-    }
-
 private:
-    void referenceCreated(VariableReference::RefKind refKind) const {
-        if (refKind != VariableReference::kRead_RefKind) {
-            ++this->variableData().fWriteCount;
-        }
-        if (refKind != VariableReference::kWrite_RefKind) {
-            ++this->variableData().fReadCount;
-        }
-    }
-
-    void referenceDestroyed(VariableReference::RefKind refKind) const {
-        if (refKind != VariableReference::kRead_RefKind) {
-            --this->variableData().fWriteCount;
-        }
-        if (refKind != VariableReference::kWrite_RefKind) {
-            --this->variableData().fReadCount;
-        }
-    }
+    VarDeclaration* fDeclaration = nullptr;
+    const Modifiers* fModifiers;
+    VariableStorage fStorage;
+    bool fBuiltin;
 
     using INHERITED = Symbol;
 
+    friend class dsl::DSLCore;
+    friend class dsl::DSLFunction;
     friend class VariableReference;
 };
 

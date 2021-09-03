@@ -7,7 +7,9 @@
 
 #include "src/sksl/ir/SkSLSymbolTable.h"
 
+#include "src/sksl/SkSLContext.h"
 #include "src/sksl/ir/SkSLSymbolAlias.h"
+#include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLUnresolvedFunction.h"
 
 namespace SkSL {
@@ -17,25 +19,38 @@ std::vector<const FunctionDeclaration*> SymbolTable::GetFunctions(const Symbol& 
         case Symbol::Kind::kFunctionDeclaration:
             return { &s.as<FunctionDeclaration>() };
         case Symbol::Kind::kUnresolvedFunction:
-            return s.as<UnresolvedFunction>().fFunctions;
+            return s.as<UnresolvedFunction>().functions();
         default:
             return std::vector<const FunctionDeclaration*>();
     }
 }
 
-Symbol* SymbolTable::operator[](StringFragment name) {
-    auto entry = fSymbols.find(name);
-    if (entry == fSymbols.end()) {
+const Symbol* SymbolTable::operator[](skstd::string_view name) {
+    return this->lookup(fBuiltin ? nullptr : this, MakeSymbolKey(name));
+}
+
+const Symbol* SymbolTable::lookup(SymbolTable* writableSymbolTable, const SymbolKey& key) {
+    // Symbol-table lookup can cause new UnresolvedFunction nodes to be created; however, we don't
+    // want these to end up in built-in root symbol tables (where they will outlive the Program
+    // associated with those UnresolvedFunction nodes). `writableSymbolTable` tracks the closest
+    // symbol table to the root which is not a built-in.
+    if (!fBuiltin) {
+        writableSymbolTable = this;
+    }
+    const Symbol** symbolPPtr = fSymbols.find(key);
+    if (!symbolPPtr) {
         if (fParent) {
-            return (*fParent)[name];
+            return fParent->lookup(writableSymbolTable, key);
         }
         return nullptr;
     }
+
+    const Symbol* symbol = *symbolPPtr;
     if (fParent) {
-        auto functions = GetFunctions(*entry->second);
+        auto functions = GetFunctions(*symbol);
         if (functions.size() > 0) {
             bool modified = false;
-            const Symbol* previous = (*fParent)[name];
+            const Symbol* previous = fParent->lookup(writableSymbolTable, key);
             if (previous) {
                 auto previousFunctions = GetFunctions(*previous);
                 for (const FunctionDeclaration* prev : previousFunctions) {
@@ -53,40 +68,41 @@ Symbol* SymbolTable::operator[](StringFragment name) {
                 }
                 if (modified) {
                     SkASSERT(functions.size() > 1);
-                    return this->takeOwnershipOfSymbol(
-                            std::make_unique<UnresolvedFunction>(functions));
+                    return writableSymbolTable
+                                   ? writableSymbolTable->takeOwnershipOfSymbol(
+                                             std::make_unique<UnresolvedFunction>(functions))
+                                   : nullptr;
                 }
             }
         }
     }
-    Symbol* symbol = entry->second;
     while (symbol && symbol->is<SymbolAlias>()) {
         symbol = symbol->as<SymbolAlias>().origSymbol();
     }
     return symbol;
 }
 
-const String* SymbolTable::takeOwnershipOfString(std::unique_ptr<String> n) {
-    String* result = n.get();
-    fOwnedStrings.push_back(std::move(n));
-    return result;
+const String* SymbolTable::takeOwnershipOfString(String str) {
+    fOwnedStrings.push_front(std::move(str));
+    // Because fOwnedStrings is a linked list, pointers to elements are stable.
+    return &fOwnedStrings.front();
 }
 
-void SymbolTable::addAlias(StringFragment name, Symbol* symbol) {
+void SymbolTable::addAlias(skstd::string_view name, const Symbol* symbol) {
     this->add(std::make_unique<SymbolAlias>(symbol->fOffset, name, symbol));
 }
 
-void SymbolTable::addWithoutOwnership(Symbol* symbol) {
-    const StringFragment& name = symbol->name();
+void SymbolTable::addWithoutOwnership(const Symbol* symbol) {
+    const skstd::string_view& name = symbol->name();
 
-    Symbol*& refInSymbolTable = fSymbols[name];
+    const Symbol*& refInSymbolTable = fSymbols[MakeSymbolKey(name)];
     if (refInSymbolTable == nullptr) {
         refInSymbolTable = symbol;
         return;
     }
 
     if (!symbol->is<FunctionDeclaration>()) {
-        fErrorReporter.error(symbol->fOffset, "symbol '" + name + "' was already defined");
+        fContext.fErrors->error(symbol->fOffset, "symbol '" + name + "' was already defined");
         return;
     }
 
@@ -98,7 +114,7 @@ void SymbolTable::addWithoutOwnership(Symbol* symbol) {
         refInSymbolTable = this->takeOwnershipOfSymbol(
                 std::make_unique<UnresolvedFunction>(std::move(functions)));
     } else if (refInSymbolTable->is<UnresolvedFunction>()) {
-        functions = refInSymbolTable->as<UnresolvedFunction>().fFunctions;
+        functions = refInSymbolTable->as<UnresolvedFunction>().functions();
         functions.push_back(&symbol->as<FunctionDeclaration>());
 
         refInSymbolTable = this->takeOwnershipOfSymbol(
@@ -106,12 +122,12 @@ void SymbolTable::addWithoutOwnership(Symbol* symbol) {
     }
 }
 
-std::unordered_map<StringFragment, Symbol*>::iterator SymbolTable::begin() {
-    return fSymbols.begin();
-}
-
-std::unordered_map<StringFragment, Symbol*>::iterator SymbolTable::end() {
-    return fSymbols.end();
+const Type* SymbolTable::addArrayDimension(const Type* type, int arraySize) {
+    if (arraySize != 0) {
+        const String* arrayName = this->takeOwnershipOfString(type->getArrayName(arraySize));
+        type = this->takeOwnershipOfSymbol(Type::MakeArrayType(*arrayName, *type, arraySize));
+    }
+    return type;
 }
 
 }  // namespace SkSL

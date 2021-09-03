@@ -33,63 +33,6 @@ describe('Font Behavior', () => {
         document.body.removeChild(container);
     });
 
-    gm('text_shaping', (canvas) => {
-        const paint = new CanvasKit.Paint();
-
-        paint.setColor(CanvasKit.BLUE);
-        paint.setStyle(CanvasKit.PaintStyle.Stroke);
-
-        const fontMgr = CanvasKit.FontMgr.RefDefault();
-        const notoSerif = fontMgr.MakeTypefaceFromData(notoSerifFontBuffer);
-
-        const textPaint = new CanvasKit.Paint();
-        const textFont = new CanvasKit.Font(notoSerif, 20);
-
-        canvas.drawRect(CanvasKit.LTRBRect(30, 30, 200, 200), paint);
-        canvas.drawText('This text is not shaped, and overflows the boundary',
-                        35, 50, textPaint, textFont);
-
-        const shapedText = new CanvasKit.ShapedText({
-            font: textFont,
-            leftToRight: true,
-            text: 'This text *is* shaped, and wraps to the right width.',
-            width: 160,
-        });
-        const textBoxX = 35;
-        const textBoxY = 55;
-        canvas.drawText(shapedText, textBoxX, textBoxY, textPaint);
-        const bounds = shapedText.getBounds();
-
-        bounds[0] += textBoxX; // left
-        bounds[2] += textBoxX; // right
-        bounds[1] += textBoxY; // top
-        bounds[3] += textBoxY // bottom
-
-        canvas.drawRect(bounds, paint);
-        const SHAPE_TEST_TEXT = 'VAVAVAVAVAFIfi';
-        const textFont2 = new CanvasKit.Font(notoSerif, 60);
-        const shapedText2 = new CanvasKit.ShapedText({
-            font: textFont2,
-            leftToRight: true,
-            text: SHAPE_TEST_TEXT,
-            width: 600,
-        });
-
-        canvas.drawText('no kerning ↓', 10, 240, textPaint, textFont);
-        canvas.drawText(SHAPE_TEST_TEXT, 10, 300, textPaint, textFont2);
-        canvas.drawText(shapedText2, 10, 300, textPaint);
-        canvas.drawText('kerning ↑', 10, 390, textPaint, textFont);
-
-        paint.delete();
-        notoSerif.delete();
-        textPaint.delete();
-        textFont.delete();
-        shapedText.delete();
-        textFont2.delete();
-        shapedText2.delete();
-        fontMgr.delete();
-    });
-
     gm('monospace_text_on_path', (canvas) => {
         const paint = new CanvasKit.Paint();
         paint.setAntiAlias(true);
@@ -121,8 +64,7 @@ describe('Font Behavior', () => {
     });
 
     gm('serif_text_on_path', (canvas) => {
-        const fontMgr = CanvasKit.FontMgr.RefDefault();
-        const notoSerif = fontMgr.MakeTypefaceFromData(notoSerifFontBuffer);
+        const notoSerif = CanvasKit.Typeface.MakeFreeTypeFaceFromData(notoSerifFontBuffer);
 
         const paint = new CanvasKit.Paint();
         paint.setAntiAlias(true);
@@ -150,13 +92,11 @@ describe('Font Behavior', () => {
         notoSerif.delete();
         font.delete();
         fontPaint.delete();
-        fontMgr.delete();
     });
 
     // https://bugs.chromium.org/p/skia/issues/detail?id=9314
     gm('nullterminators_skbug_9314', (canvas) => {
-        const fontMgr = CanvasKit.FontMgr.RefDefault();
-        const bungee = fontMgr.MakeTypefaceFromData(bungeeFontBuffer);
+        const bungee = CanvasKit.Typeface.MakeFreeTypeFaceFromData(bungeeFontBuffer);
 
         // yellow, to make sure tofu is plainly visible
         canvas.clear(CanvasKit.Color(255, 255, 0, 1));
@@ -180,13 +120,11 @@ describe('Font Behavior', () => {
         bungee.delete();
         font.delete();
         fontPaint.delete();
-        fontMgr.delete();
     });
 
     gm('textblobs_with_glyphs', (canvas) => {
         canvas.clear(CanvasKit.WHITE);
-        const fontMgr = CanvasKit.FontMgr.RefDefault();
-        const notoSerif = fontMgr.MakeTypefaceFromData(notoSerifFontBuffer);
+        const notoSerif = CanvasKit.Typeface.MakeFreeTypeFaceFromData(notoSerifFontBuffer);
 
         const font = new CanvasKit.Font(notoSerif, 24);
         const bluePaint = new CanvasKit.Paint();
@@ -197,7 +135,7 @@ describe('Font Behavior', () => {
         const redPaint = new CanvasKit.Paint();
         redPaint.setColor(CanvasKit.parseColorString('#770b1e')); // arbitrary deep red
 
-        const ids = font.getGlyphIDs('AEGIS ægis');
+        const ids = notoSerif.getGlyphIDs('AEGIS ægis');
         expect(ids.length).toEqual(10); // one glyph id per glyph
         expect(ids[0]).toEqual(36); // spot check this, should be consistent as long as the font is.
 
@@ -244,7 +182,6 @@ describe('Font Behavior', () => {
         redPaint.delete();
         notoSerif.delete();
         font.delete();
-        fontMgr.delete();
     });
 
     it('can make a font mgr with passed in fonts', () => {
@@ -273,7 +210,6 @@ describe('Font Behavior', () => {
     });
 
     gm('various_font_formats', (canvas, fetchedByteBuffers) => {
-        const fontMgr = CanvasKit.FontMgr.RefDefault();
         const fontPaint = new CanvasKit.Paint();
         fontPaint.setAntiAlias(true);
         fontPaint.setStyle(CanvasKit.PaintStyle.Fill);
@@ -286,12 +222,10 @@ describe('Font Behavior', () => {
             buffer: fetchedByteBuffers[0],
             y: 90,
         },{
-            // Not currently supported by Skia
             type: '.woff font',
             buffer: fetchedByteBuffers[1],
             y: 120,
         },{
-            // Not currently supported by Skia
             type: '.woff2 font',
             buffer: fetchedByteBuffers[2],
             y: 150,
@@ -304,7 +238,7 @@ describe('Font Behavior', () => {
             // smoke test that the font bytes loaded.
             expect(fontType.buffer).toBeTruthy(fontType.type + ' did not load');
 
-            const typeface = fontMgr.MakeTypefaceFromData(fontType.buffer);
+            const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fontType.buffer);
             const font = new CanvasKit.Font(typeface, 24);
 
             if (font && typeface) {
@@ -320,7 +254,7 @@ describe('Font Behavior', () => {
         // which doesn't have very many glyphs in it, so we just check that we got a non-zero
         // typeface for it. I was able to load NotoSansCJK-Regular.ttc just fine in a
         // manual test.
-        const typeface = fontMgr.MakeTypefaceFromData(fetchedByteBuffers[3]);
+        const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(fetchedByteBuffers[3]);
         expect(typeface).toBeTruthy('.ttc font');
         if (typeface) {
             canvas.drawText('.ttc loaded', 5, 180, fontPaint, defaultFont);
@@ -331,40 +265,37 @@ describe('Font Behavior', () => {
 
         defaultFont.delete();
         fontPaint.delete();
-        fontMgr.delete();
     }, '/assets/Roboto-Regular.otf', '/assets/Roboto-Regular.woff', '/assets/Roboto-Regular.woff2', '/assets/test.ttc');
 
     it('can measure text very precisely with proper settings', () => {
-        const fontMgr = CanvasKit.FontMgr.RefDefault();
-        const typeface = fontMgr.MakeTypefaceFromData(notoSerifFontBuffer);
+        const typeface = CanvasKit.Typeface.MakeFreeTypeFaceFromData(notoSerifFontBuffer);
         const fontSizes = [257, 100, 11];
         // The point of these values is to let us know 1) we can measure to sub-pixel levels
         // and 2) that measurements don't drastically change. If these change a little bit,
         // just update them with the new values. For super-accurate readings, one could
         // run a C++ snippet of code and compare the values, but that is likely unnecessary
         // unless we suspect a bug with the bindings.
-        const expectedSizes = [1178.71143, 458.64258, 50.450683];
+        const expectedSizes = [241.06299, 93.79883, 10.31787];
         for (const idx in fontSizes) {
             const font = new CanvasKit.Font(typeface, fontSizes[idx]);
             font.setHinting(CanvasKit.FontHinting.None);
             font.setLinearMetrics(true);
             font.setSubpixel(true);
 
-            const res = font.measureText('someText');
-            expect(res).toBeCloseTo(expectedSizes[idx], 5);
+            const ids = font.getGlyphIDs('M');
+            const widths = font.getGlyphWidths(ids);
+            expect(widths[0]).toBeCloseTo(expectedSizes[idx], 5);
             font.delete();
         }
 
         typeface.delete();
-        fontMgr.delete();
     });
 
     gm('font_edging', (canvas) => {
         // Draw a small font scaled up to see the aliasing artifacts.
         canvas.scale(8, 8);
         canvas.clear(CanvasKit.WHITE);
-        const fontMgr = CanvasKit.FontMgr.RefDefault();
-        const notoSerif = fontMgr.MakeTypefaceFromData(notoSerifFontBuffer);
+        const notoSerif = CanvasKit.Typeface.MakeFreeTypeFaceFromData(notoSerifFontBuffer);
 
         const textPaint = new CanvasKit.Paint();
         const annotationFont = new CanvasKit.Font(notoSerif, 6);
@@ -388,7 +319,98 @@ describe('Font Behavior', () => {
         annotationFont.delete();
         testFont.delete();
         notoSerif.delete();
-        fontMgr.delete();
+    });
+
+    it('can get the intercepts of glyphs', () => {
+        const font = new CanvasKit.Font(null, 100);
+        const ids = font.getGlyphIDs('I');
+        expect(ids.length).toEqual(1);
+
+        // aim for the middle of the I at 100 point, expecting a hit
+        let sects = font.getGlyphIntercepts(ids, [0, 0], -60, -40);
+        expect(sects.length).toEqual(2, "expected one pair of intercepts");
+        expect(sects[0]).toBeCloseTo(25.39063, 5);
+        expect(sects[1]).toBeCloseTo(34.52148, 5);
+
+        // aim below the baseline where we expect no intercepts
+        sects = font.getGlyphIntercepts(ids, [0, 0], 20, 30);
+        expect(sects.length).toEqual(0, "expected no intercepts");
+        font.delete();
+    });
+
+    it('can use mallocd and normal arrays', () => {
+        const font = new CanvasKit.Font(null, 100);
+        const ids = font.getGlyphIDs('I');
+        expect(ids.length).toEqual(1);
+        const glyphID = ids[0];
+
+        // aim for the middle of the I at 100 point, expecting a hit
+        const sects = font.getGlyphIntercepts(Array.of(glyphID), Float32Array.of(0, 0), -60, -40);
+        expect(sects.length).toEqual(2);
+        expect(sects[0]).toBeLessThan(sects[1]);
+        // these values were recorded from the first time it was run
+        expect(sects[0]).toBeCloseTo(25.39063, 5);
+        expect(sects[1]).toBeCloseTo(34.52148, 5);
+
+        const free_list = [];   // will free CanvasKit.Malloc objects at the end
+
+        // Want to exercise 4 different ways we can receive an array:
+        //  1. normal array
+        //  2. typed-array
+        //  3. CanvasKit.Malloc typeed-array
+        //  4. CavnasKit.Malloc (raw)
+
+        const id_makers = [
+            (id) => [ id ],
+            (id) => new Uint16Array([ id ]),
+            (id) => {
+                const a = CanvasKit.Malloc(Uint16Array, 1);
+                free_list.push(a);
+                const ta = a.toTypedArray();
+                ta[0] = id;
+                return ta;  // return typed-array
+            },
+            (id) => {
+                const a = CanvasKit.Malloc(Uint16Array, 1);
+                free_list.push(a);
+                a.toTypedArray()[0] = id;
+                return a;   // return raw obj
+            },
+        ];
+        const pos_makers = [
+            (x, y) => [ x, y ],
+            (x, y) => new Float32Array([ x, y ]),
+            (x, y) => {
+                const a = CanvasKit.Malloc(Float32Array, 2);
+                free_list.push(a);
+                const ta = a.toTypedArray();
+                ta[0] = x;
+                ta[1] = y;
+                return ta;  // return typed-array
+            },
+            (x, y) => {
+                const a = CanvasKit.Malloc(Float32Array, 2);
+                free_list.push(a);
+                const ta = a.toTypedArray();
+                ta[0] = x;
+                ta[1] = y;
+                return a;   // return raw obj
+            },
+        ];
+
+        for (const idm of id_makers) {
+            for (const posm of pos_makers) {
+                const s = font.getGlyphIntercepts(idm(glyphID), posm(0, 0), -60, -40);
+                expect(s.length).toEqual(sects.length);
+                for (let i = 0; i < s.length; ++i) {
+                    expect(s[i]).toEqual(sects[i]);
+                }
+            }
+
+        }
+
+        free_list.forEach(obj => CanvasKit.Free(obj));
+        font.delete();
     });
 
 });

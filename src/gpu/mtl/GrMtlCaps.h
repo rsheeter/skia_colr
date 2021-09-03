@@ -10,7 +10,7 @@
 
 #include "include/private/SkTDArray.h"
 #include "src/gpu/GrCaps.h"
-#include "src/gpu/mtl/GrMtlStencilAttachment.h"
+#include "src/gpu/mtl/GrMtlAttachment.h"
 
 #import <Metal/Metal.h>
 
@@ -21,12 +21,11 @@ class GrShaderCaps;
  */
 class GrMtlCaps : public GrCaps {
 public:
-    GrMtlCaps(const GrContextOptions& contextOptions, id<MTLDevice> device,
-              MTLFeatureSet featureSet);
+    GrMtlCaps(const GrContextOptions& contextOptions, id<MTLDevice> device);
 
     bool isFormatSRGB(const GrBackendFormat&) const override;
 
-    bool isFormatTexturable(const GrBackendFormat&) const override;
+    bool isFormatTexturable(const GrBackendFormat&, GrTextureType) const override;
     bool isFormatTexturable(MTLPixelFormat) const;
 
     bool isFormatCopyable(const GrBackendFormat&) const override { return true; }
@@ -91,7 +90,13 @@ public:
 
     uint64_t computeFormatKey(const GrBackendFormat&) const override;
 
-    GrProgramDesc makeDesc(GrRenderTarget*, const GrProgramInfo&) const override;
+    GrProgramDesc makeDesc(GrRenderTarget*,
+                           const GrProgramInfo&,
+                           ProgramDescOverrideFlags) const override;
+    MTLPixelFormat getStencilPixelFormat(const GrProgramDesc& desc);
+
+    // if true, MTLStoreActionStoreAndMultiplesampleResolve is available
+    bool storeAndMultisampleResolveSupport() const { return fStoreAndMultisampleResolveSupport; }
 
 #if GR_TEST_UTILS
     std::vector<TestFormatColorTypeCombination> getTestingCombinations() const override;
@@ -99,12 +104,14 @@ public:
     void onDumpJSON(SkJSONWriter*) const override;
 
 private:
-    void initFeatureSet(MTLFeatureSet featureSet);
+    void initGPUFamily(id<MTLDevice> device);
 
-    void initStencilFormat(const id<MTLDevice> device);
+    void initStencilFormat(id<MTLDevice> device);
 
-    void initGrCaps(const id<MTLDevice> device);
+    void initGrCaps(id<MTLDevice> device);
     void initShaderCaps();
+
+    void applyDriverCorrectnessWorkarounds(const GrContextOptions&, const id<MTLDevice>);
 
     void initFormatTable();
 
@@ -174,20 +181,24 @@ private:
     MTLPixelFormat fColorTypeToFormatTable[kGrColorTypeCnt];
     void setColorType(GrColorType, std::initializer_list<MTLPixelFormat> formats);
 
-    enum class Platform {
+    enum class GPUFamily {
         kMac,
-        kIOS
+        kApple,
     };
-    bool isMac() { return Platform::kMac == fPlatform; }
-    bool isIOS() { return Platform::kIOS == fPlatform; }
+    bool isMac() { return fGPUFamily == GPUFamily::kMac; }
+    bool isApple() { return fGPUFamily == GPUFamily::kApple; }
+    bool getGPUFamily(id<MTLDevice> device, GPUFamily* gpuFamily, int* group);
+    bool getGPUFamilyFromFeatureSet(id<MTLDevice> device, GrMtlCaps::GPUFamily* gpuFamily,
+                                    int* group);
 
-    Platform fPlatform;
+    GPUFamily fGPUFamily;
     int fFamilyGroup;
-    int fVersion;
 
     SkTDArray<int> fSampleCounts;
 
     MTLPixelFormat fPreferredStencilFormat;
+
+    bool fStoreAndMultisampleResolveSupport;
 
     using INHERITED = GrCaps;
 };

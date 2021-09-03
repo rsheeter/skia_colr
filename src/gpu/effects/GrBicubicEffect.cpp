@@ -16,18 +16,15 @@
 #include "src/gpu/glsl/GrGLSLUniformHandler.h"
 #include <cmath>
 
-class GrBicubicEffect::Impl : public GrGLSLFragmentProcessor {
+class GrBicubicEffect::Impl : public ProgramImpl {
 public:
-    Impl() : fKernel{-1, -1} {}
     void emitCode(EmitArgs&) override;
 
-protected:
+private:
     void onSetData(const GrGLSLProgramDataManager&, const GrFragmentProcessor&) override;
 
-private:
-    SkImage::CubicResampler fKernel;
+    SkImage::CubicResampler fKernel = {-1, -1};
     UniformHandle fCoefficientUni;
-    using INHERITED = GrGLSLFragmentProcessor;
 };
 
 void GrBicubicEffect::Impl::emitCode(EmitArgs& args) {
@@ -99,7 +96,7 @@ void GrBicubicEffect::Impl::emitCode(EmitArgs& args) {
                     "bicubicColor.rgb = max(half3(0.0), min(bicubicColor.rgb, bicubicColor.aaa));");
             break;
     }
-    fragBuilder->codeAppendf("%s = bicubicColor;", args.fOutputColor);
+    fragBuilder->codeAppendf("return bicubicColor;");
 }
 
 #include "src/shaders/SkImageShader.h"
@@ -211,25 +208,26 @@ GrBicubicEffect::GrBicubicEffect(std::unique_ptr<GrFragmentProcessor> fp,
 }
 
 GrBicubicEffect::GrBicubicEffect(const GrBicubicEffect& that)
-        : INHERITED(kGrBicubicEffect_ClassID, that.optimizationFlags())
+        : INHERITED(that)
         , fKernel(that.fKernel)
         , fDirection(that.fDirection)
-        , fClamp(that.fClamp) {
-    this->setUsesSampleCoordsDirectly();
-    this->cloneAndRegisterAllChildProcessors(that);
-}
+        , fClamp(that.fClamp) {}
 
-void GrBicubicEffect::onGetGLSLProcessorKey(const GrShaderCaps& caps,
-                                            GrProcessorKeyBuilder* b) const {
+void GrBicubicEffect::onAddToKey(const GrShaderCaps& caps, GrProcessorKeyBuilder* b) const {
     uint32_t key = (static_cast<uint32_t>(fDirection) << 0) | (static_cast<uint32_t>(fClamp) << 2);
     b->add32(key);
 }
 
-GrGLSLFragmentProcessor* GrBicubicEffect::onCreateGLSLInstance() const { return new Impl(); }
+std::unique_ptr<GrFragmentProcessor::ProgramImpl> GrBicubicEffect::onMakeProgramImpl() const {
+    return std::make_unique<Impl>();
+}
 
 bool GrBicubicEffect::onIsEqual(const GrFragmentProcessor& other) const {
     const auto& that = other.cast<GrBicubicEffect>();
-    return fDirection == that.fDirection && fClamp == that.fClamp;
+    return fDirection == that.fDirection &&
+           fClamp == that.fClamp         &&
+           fKernel.B == that.fKernel.B   &&
+           fKernel.C == that.fKernel.C;
 }
 
 SkPMColor4f GrBicubicEffect::constantOutputForConstantInput(const SkPMColor4f& input) const {

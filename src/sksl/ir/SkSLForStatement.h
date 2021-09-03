@@ -8,97 +8,120 @@
 #ifndef SKSL_FORSTATEMENT
 #define SKSL_FORSTATEMENT
 
+#include "include/private/SkSLStatement.h"
 #include "src/sksl/ir/SkSLExpression.h"
-#include "src/sksl/ir/SkSLStatement.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 
 namespace SkSL {
 
 /**
+ * The unrollability information for an ES2-compatible loop.
+ */
+struct LoopUnrollInfo {
+    const Variable* fIndex;
+    double fStart;
+    double fDelta;
+    int fCount;
+};
+
+/**
  * A 'for' statement.
  */
-class ForStatement : public Statement {
+class ForStatement final : public Statement {
 public:
     static constexpr Kind kStatementKind = Kind::kFor;
 
-    ForStatement(int offset, std::unique_ptr<Statement> initializer,
-                 std::unique_ptr<Expression> test, std::unique_ptr<Expression> next,
-                 std::unique_ptr<Statement> statement, std::shared_ptr<SymbolTable> symbols)
-    : INHERITED(offset, ForStatementData{std::move(symbols)}) {
-        fStatementChildren.reserve(2);
-        fStatementChildren.push_back(std::move(initializer));
-        fStatementChildren.push_back(std::move(statement));
-        fExpressionChildren.reserve(2);
-        fExpressionChildren.push_back(std::move(test));
-        fExpressionChildren.push_back(std::move(next));
-    }
+    ForStatement(int offset,
+                 std::unique_ptr<Statement> initializer,
+                 std::unique_ptr<Expression> test,
+                 std::unique_ptr<Expression> next,
+                 std::unique_ptr<Statement> statement,
+                 std::unique_ptr<LoopUnrollInfo> unrollInfo,
+                 std::shared_ptr<SymbolTable> symbols)
+            : INHERITED(offset, kStatementKind)
+            , fSymbolTable(std::move(symbols))
+            , fInitializer(std::move(initializer))
+            , fTest(std::move(test))
+            , fNext(std::move(next))
+            , fStatement(std::move(statement))
+            , fUnrollInfo(std::move(unrollInfo)) {}
+
+    // Creates an SkSL for loop; handles type-coercion and uses the ErrorReporter to report errors.
+    static std::unique_ptr<Statement> Convert(const Context& context, int offset,
+                                              std::unique_ptr<Statement> initializer,
+                                              std::unique_ptr<Expression> test,
+                                              std::unique_ptr<Expression> next,
+                                              std::unique_ptr<Statement> statement,
+                                              std::shared_ptr<SymbolTable> symbolTable);
+
+    // Creates an SkSL while loop; handles type-coercion and uses the ErrorReporter for errors.
+    static std::unique_ptr<Statement> ConvertWhile(const Context& context, int offset,
+                                                   std::unique_ptr<Expression> test,
+                                                   std::unique_ptr<Statement> statement,
+                                                   std::shared_ptr<SymbolTable> symbolTable);
+
+    // Creates an SkSL for/while loop. Assumes properly coerced types and reports errors via assert.
+    static std::unique_ptr<Statement> Make(const Context& context, int offset,
+                                           std::unique_ptr<Statement> initializer,
+                                           std::unique_ptr<Expression> test,
+                                           std::unique_ptr<Expression> next,
+                                           std::unique_ptr<Statement> statement,
+                                           std::unique_ptr<LoopUnrollInfo> unrollInfo,
+                                           std::shared_ptr<SymbolTable> symbolTable);
 
     std::unique_ptr<Statement>& initializer() {
-        return fStatementChildren[0];
+        return fInitializer;
     }
 
     const std::unique_ptr<Statement>& initializer() const {
-        return fStatementChildren[0];
+        return fInitializer;
     }
 
     std::unique_ptr<Expression>& test() {
-        return fExpressionChildren[0];
+        return fTest;
     }
 
     const std::unique_ptr<Expression>& test() const {
-        return fExpressionChildren[0];
+        return fTest;
     }
 
     std::unique_ptr<Expression>& next() {
-        return fExpressionChildren[1];
+        return fNext;
     }
 
     const std::unique_ptr<Expression>& next() const {
-        return fExpressionChildren[1];
+        return fNext;
     }
 
     std::unique_ptr<Statement>& statement() {
-        return fStatementChildren[1];
+        return fStatement;
     }
 
     const std::unique_ptr<Statement>& statement() const {
-        return fStatementChildren[1];
+        return fStatement;
     }
 
-    std::shared_ptr<SymbolTable> symbols() const {
-        return this->forStatementData().fSymbolTable;
+    const std::shared_ptr<SymbolTable>& symbols() const {
+        return fSymbolTable;
     }
 
-    std::unique_ptr<Statement> clone() const override {
-        return std::unique_ptr<Statement>(new ForStatement(
-                                       fOffset,
-                                       this->initializer() ? this->initializer()->clone() : nullptr,
-                                       this->test() ? this->test()->clone() : nullptr,
-                                       this->next() ? this->next()->clone() : nullptr,
-                                       this->statement()->clone(),
-                                       this->symbols()));
+    /** Loop-unroll information is only supported in strict-ES2 code. Null is returned in ES3+. */
+    const LoopUnrollInfo* unrollInfo() const {
+        return fUnrollInfo.get();
     }
 
-    String description() const override {
-        String result("for (");
-        if (this->initializer()) {
-            result += this->initializer()->description();
-        } else {
-            result += ";";
-        }
-        result += " ";
-        if (this->test()) {
-            result += this->test()->description();
-        }
-        result += "; ";
-        if (this->next()) {
-            result += this->next()->description();
-        }
-        result += ") " + this->statement()->description();
-        return result;
-    }
+    std::unique_ptr<Statement> clone() const override;
+
+    String description() const override;
 
 private:
+    std::shared_ptr<SymbolTable> fSymbolTable;
+    std::unique_ptr<Statement> fInitializer;
+    std::unique_ptr<Expression> fTest;
+    std::unique_ptr<Expression> fNext;
+    std::unique_ptr<Statement> fStatement;
+    std::unique_ptr<LoopUnrollInfo> fUnrollInfo;
+
     using INHERITED = Statement;
 };
 

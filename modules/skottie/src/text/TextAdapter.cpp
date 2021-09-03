@@ -9,6 +9,7 @@
 
 #include "include/core/SkFontMgr.h"
 #include "include/core/SkM44.h"
+#include "include/private/SkTPin.h"
 #include "modules/skottie/src/SkottieJson.h"
 #include "modules/skottie/src/text/RangeSelector.h"
 #include "modules/skottie/src/text/TextAnimator.h"
@@ -268,6 +269,8 @@ void TextAdapter::reshape() {
     const Shaper::TextDesc text_desc = {
         fText->fTypeface,
         fText->fTextSize,
+        fText->fMinTextSize,
+        fText->fMaxTextSize,
         fText->fLineHeight,
         fText->fLineShift,
         fText->fAscent,
@@ -275,6 +278,8 @@ void TextAdapter::reshape() {
         fText->fVAlign,
         fText->fResize,
         fText->fLineBreak,
+        fText->fDirection,
+        fText->fCapitalization,
         this->shaperFlags(),
     };
     const auto shape_result = Shaper::Shape(fText->fText, text_desc, fText->fBox, fFontMgr);

@@ -17,7 +17,7 @@
 #include "include/core/SkScalar.h"
 #include "include/core/SkStream.h"
 #include "include/core/SkTypes.h"
-#include "include/effects/SkMorphologyImageFilter.h"
+#include "include/effects/SkImageFilters.h"
 #include "include/effects/SkPerlinNoiseShader.h"
 #include "include/private/SkTo.h"
 #include "src/core/SkGlyphRun.h"
@@ -38,8 +38,6 @@
 #include <cstdlib>
 #include <cmath>
 #include <memory>
-
-#define DUMMY_TEXT "DCT compessed stream."
 
 template <typename T>
 static SkString emit_to_string(T& obj) {
@@ -254,10 +252,10 @@ DEF_TEST(SkPDF_Primitives, reporter) {
 
 namespace {
 
-class DummyImageFilter : public SkImageFilter_Base {
+class TestImageFilter : public SkImageFilter_Base {
 public:
-    static sk_sp<DummyImageFilter> Make(bool visited = false) {
-        return sk_sp<DummyImageFilter>(new DummyImageFilter(visited));
+    static sk_sp<TestImageFilter> Make(bool visited = false) {
+        return sk_sp<TestImageFilter>(new TestImageFilter(visited));
     }
 
     bool visited() const { return fVisited; }
@@ -270,18 +268,18 @@ protected:
     }
 
 private:
-    SK_FLATTENABLE_HOOKS(DummyImageFilter)
-    DummyImageFilter(bool visited) : INHERITED(nullptr, 0, nullptr), fVisited(visited) {}
+    SK_FLATTENABLE_HOOKS(TestImageFilter)
+    TestImageFilter(bool visited) : INHERITED(nullptr, 0, nullptr), fVisited(visited) {}
 
     mutable bool fVisited;
 
     using INHERITED = SkImageFilter_Base;
 };
 
-sk_sp<SkFlattenable> DummyImageFilter::CreateProc(SkReadBuffer& buffer) {
+sk_sp<SkFlattenable> TestImageFilter::CreateProc(SkReadBuffer& buffer) {
     SK_IMAGEFILTER_UNFLATTEN_COMMON(common, 0);
     bool visited = buffer.readBool();
-    return DummyImageFilter::Make(visited);
+    return TestImageFilter::Make(visited);
 }
 
 }  // namespace
@@ -294,7 +292,7 @@ DEF_TEST(SkPDF_ImageFilter, reporter) {
     auto doc = SkPDF::MakeDocument(&stream);
     SkCanvas* canvas = doc->beginPage(100.0f, 100.0f);
 
-    sk_sp<DummyImageFilter> filter(DummyImageFilter::Make());
+    sk_sp<TestImageFilter> filter(TestImageFilter::Make());
 
     // Filter just created; should be unvisited.
     REPORTER_ASSERT(reporter, !filter->visited());
@@ -393,7 +391,8 @@ static SkGlyphRun make_run(size_t len, const SkGlyphID* glyphs, SkPoint* pos,
                       SkSpan<const SkPoint>{pos, len},
                       SkSpan<const SkGlyphID>{glyphs, len},
                       SkSpan<const char>{utf8Text, utf8TextByteLength},
-                      SkSpan<const uint32_t>{clusters, len});
+                      SkSpan<const uint32_t>{clusters, len},
+                      SkSpan<const SkVector>{});
 }
 
 DEF_TEST(SkPDF_Clusterator, reporter) {
@@ -453,7 +452,7 @@ DEF_TEST(fuzz875632f0, reporter) {
     SkAutoCanvasRestore autoCanvasRestore(canvas, false);
 
     SkPaint layerPaint({0, 0, 0, 0});
-    layerPaint.setImageFilter(SkDilateImageFilter::Make(536870912, 0, nullptr, nullptr));
+    layerPaint.setImageFilter(SkImageFilters::Dilate(536870912, 0, nullptr, nullptr));
     layerPaint.setBlendMode(SkBlendMode::kClear);
 
     canvas->saveLayer(nullptr, &layerPaint);

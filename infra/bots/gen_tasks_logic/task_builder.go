@@ -6,8 +6,10 @@ package gen_tasks_logic
 import (
 	"log"
 	"reflect"
+	"strings"
 	"time"
 
+	"go.skia.org/infra/go/cipd"
 	"go.skia.org/infra/task_scheduler/go/specs"
 )
 
@@ -83,9 +85,9 @@ func (b *taskBuilder) idempotent() {
 	b.Spec.Idempotent = true
 }
 
-// isolate sets the isolate file used by the task.
-func (b *taskBuilder) isolate(i string) {
-	b.Spec.Isolate = b.relpath(i)
+// cas sets the CasSpec used by the task.
+func (b *taskBuilder) cas(casSpec string) {
+	b.Spec.CasSpec = casSpec
 }
 
 // env appends the given values to the given environment variable for the task.
@@ -165,12 +167,12 @@ func (b *taskBuilder) useIsolatedAssets() bool {
 	return false
 }
 
-// isolateAssetConfig represents a task which copies a CIPD package into
+// uploadAssetCASCfg represents a task which copies a CIPD package into
 // isolate.
-type isolateAssetCfg struct {
-	alwaysIsolate   bool
-	isolateTaskName string
-	path            string
+type uploadAssetCASCfg struct {
+	alwaysIsolate  bool
+	uploadTaskName string
+	path           string
 }
 
 // asset adds the given assets to the task as CIPD packages.
@@ -179,7 +181,7 @@ func (b *taskBuilder) asset(assets ...string) {
 	pkgs := make([]*specs.CipdPackage, 0, len(assets))
 	for _, asset := range assets {
 		if cfg, ok := ISOLATE_ASSET_MAPPING[asset]; ok && (cfg.alwaysIsolate || shouldIsolate) {
-			b.dep(b.isolateCIPDAsset(asset))
+			b.dep(b.uploadCIPDAssetToCAS(asset))
 		} else {
 			pkgs = append(pkgs, b.MustGetCipdPackageFromAsset(asset))
 		}
@@ -215,6 +217,8 @@ func (b *taskBuilder) usesGo() {
 		pkg.Path = "go"
 	}
 	b.cipd(pkg)
+	b.addToPATH(pkg.Path + "/go/bin")
+	b.env("GOROOT", pkg.Path+"/go")
 }
 
 // usesDocker adds attributes to tasks which use docker.
@@ -244,7 +248,14 @@ func (b *taskBuilder) recipeProps(props map[string]string) {
 // after they have been added to the task.
 func (b *taskBuilder) getRecipeProps() string {
 	props := make(map[string]interface{}, len(b.recipeProperties)+2)
-	props["buildername"] = b.Name
+	// TODO(borenet): I'm not sure why we supply the original task name
+	// and not the upload task name.  We should investigate whether this is
+	// needed.
+	buildername := b.Name
+	if b.role("Upload") {
+		buildername = strings.TrimPrefix(buildername, "Upload-")
+	}
+	props["buildername"] = buildername
 	props["$kitchen"] = struct {
 		DevShell bool `json:"devshell"`
 		GitAuth  bool `json:"git_auth"`
@@ -259,20 +270,41 @@ func (b *taskBuilder) getRecipeProps() string {
 	return marshalJson(props)
 }
 
+// cipdPlatform returns the CIPD platform for this task.
+func (b *taskBuilder) cipdPlatform() string {
+	if b.role("Upload") {
+		return cipd.PlatformLinuxAmd64
+	} else if b.matchOs("Win") || b.matchExtraConfig("Win") {
+		return cipd.PlatformWindowsAmd64
+	} else if b.matchOs("Mac") {
+		return cipd.PlatformMacAmd64
+	} else if b.matchArch("Arm64") {
+		return cipd.PlatformLinuxArm64
+	} else if b.matchModel("GalaxyS20") || b.matchModel("P30") {
+		return cipd.PlatformLinuxArm64
+	} else if b.matchOs("Android", "ChromeOS", "iOS") {
+		return cipd.PlatformLinuxArmv6l
+	} else {
+		return cipd.PlatformLinuxAmd64
+	}
+}
+
 // usesPython adds attributes to tasks which use python.
 func (b *taskBuilder) usesPython() {
-	// TODO(borenet): This is hacky and bad.
-	b.cipd(specs.CIPD_PKGS_PYTHON[1])
-	if (b.matchOs("Win") || b.matchExtraConfig("Win")) && !b.model("LenovoYogaC630") {
-		b.cipd(CIPD_PKG_CPYTHON)
-	} else if b.os("Mac10.15") && b.model("VMware7.1") {
-		b.cipd(CIPD_PKG_CPYTHON)
-	}
+	pythonPkgs := cipd.PkgsPython[b.cipdPlatform()]
+	b.cipd(pythonPkgs...)
+	b.addToPATH(
+		"cipd_bin_packages/cpython",
+		"cipd_bin_packages/cpython/bin",
+		"cipd_bin_packages/cpython3",
+		"cipd_bin_packages/cpython3/bin",
+	)
 	b.cache(&specs.Cache{
 		Name: "vpython",
 		Path: "cache/vpython",
 	})
 	b.env("VPYTHON_VIRTUALENV_ROOT", "cache/vpython")
+	b.env("VPYTHON_LOG_TRACE", "1")
 }
 
 func (b *taskBuilder) usesNode() {

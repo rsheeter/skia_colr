@@ -29,13 +29,19 @@ def compile_swiftshader(api, extra_tokens, swiftshader_root, cc, cxx, out):
   """
   swiftshader_opts = [
       '-DSWIFTSHADER_BUILD_TESTS=OFF',
-      '-DSWIFTSHADER_WARNINGS_AS_ERRORS=0',
+      '-DSWIFTSHADER_WARNINGS_AS_ERRORS=OFF',
+      '-DREACTOR_ENABLE_MEMORY_SANITIZER_INSTRUMENTATION=OFF',  # Way too slow.
   ]
   cmake_bin = str(api.vars.workdir.join('cmake_linux', 'bin'))
   env = {
       'CC': cc,
       'CXX': cxx,
-      'PATH': '%%(PATH)s:%s' % cmake_bin
+      'PATH': '%%(PATH)s:%s' % cmake_bin,
+      # We arrange our MSAN/TSAN prebuilts a little differently than
+      # SwiftShader's CMakeLists.txt expects, so we'll just keep our custom
+      # setup (everything mentioning libcxx below) and point SwiftShader's
+      # CMakeLists.txt at a harmless non-existent path.
+      'SWIFTSHADER_MSAN_INSTRUMENTED_LIBCXX_PATH': '/totally/phony/path',
   }
 
   # Extra flags for MSAN/TSAN, if necessary.
@@ -68,8 +74,14 @@ def compile_swiftshader(api, extra_tokens, swiftshader_root, cc, cxx, out):
   with api.context(cwd=out, env=env):
     api.run(api.step, 'swiftshader cmake',
             cmd=['cmake'] + swiftshader_opts + [swiftshader_root, '-GNinja'])
+    # See https://swiftshader-review.googlesource.com/c/SwiftShader/+/56452 for when the
+    # deprecated targets were added. See skbug.com/12386 for longer-term plans.
     api.run(api.step, 'swiftshader ninja',
-            cmd=['ninja', '-C', out, 'libEGL.so', 'libGLESv2.so'])
+            cmd=['ninja', '-C', out, 'libEGL_deprecated.so', 'libGLESv2_deprecated.so'])
+    api.run(api.step, 'rename legacy libEGL binary',
+            cmd=['cp', 'libEGL_deprecated.so', 'libEGL.so'])
+    api.run(api.step, 'rename legacy libGLESv2 binary',
+            cmd=['cp', 'libGLESv2_deprecated.so', 'libGLESv2.so'])
 
 
 def compile_fn(api, checkout_root, out_dir):
@@ -89,16 +101,17 @@ def compile_fn(api, checkout_root, out_dir):
   args = {'werror': 'true'}
   env = {}
 
-  if os == 'Mac' or os == 'Mac10.15.5':
+  if os == 'Mac':
     # XCode build is listed in parentheses after the version at
     # https://developer.apple.com/news/releases/, or on Wikipedia here:
     # https://en.wikipedia.org/wiki/Xcode#Version_comparison_table
     # Use lowercase letters.
-    XCODE_BUILD_VERSION = '11c29'
-    if os == 'Mac10.15.5':
+    # https://chrome-infra-packages.appspot.com/p/infra_internal/ios/xcode
+    XCODE_BUILD_VERSION = '12c33'
+    if compiler == 'Xcode11.4.1':
       XCODE_BUILD_VERSION = '11e503a'
     extra_cflags.append(
-        '-DDUMMY_xcode_build_version=%s' % XCODE_BUILD_VERSION)
+        '-DREBUILD_IF_CHANGED_xcode_build_version=%s' % XCODE_BUILD_VERSION)
     mac_toolchain_cmd = api.vars.workdir.join(
         'mac_toolchain', 'mac_toolchain')
     xcode_app_path = api.vars.cache_dir.join('Xcode.app')
@@ -120,13 +133,8 @@ def compile_fn(api, checkout_root, out_dir):
       api.step('select xcode', [
           'sudo', 'xcode-select', '-switch', xcode_app_path])
       if 'iOS' in extra_tokens:
-        if target_arch == 'arm':
-          # Can only compile for 32-bit up to iOS 10.
-          env['IPHONEOS_DEPLOYMENT_TARGET'] = '10.0'
-        else:
-          # Our iOS devices are on an older version.
-          # Can't compile for Metal before 11.0.
-          env['IPHONEOS_DEPLOYMENT_TARGET'] = '11.0'
+        # Can't compile for Metal before 11.0.
+        env['IPHONEOS_DEPLOYMENT_TARGET'] = '11.0'
       else:
         # We have some bots on 10.13.
         env['MACOSX_DEPLOYMENT_TARGET'] = '10.13'
@@ -138,7 +146,7 @@ def compile_fn(api, checkout_root, out_dir):
     args['skia_generate_workarounds'] = 'true'
 
   # ccache + clang-tidy.sh chokes on the argument list.
-  if (api.vars.is_linux or os == 'Mac' or os == 'Mac10.15.5') and 'Tidy' not in extra_tokens:
+  if (api.vars.is_linux or os == 'Mac' or os == 'Mac10.15.5' or os == 'Mac10.15.7') and 'Tidy' not in extra_tokens:
     if api.vars.is_linux:
       ccache = api.vars.workdir.join('ccache_linux', 'bin', 'ccache')
       # As of 2020-02-07, the sum of each Debian10-Clang-x86
@@ -165,7 +173,7 @@ def compile_fn(api, checkout_root, out_dir):
     extra_cflags .append('-B%s/bin' % clang_linux)
     extra_ldflags.append('-B%s/bin' % clang_linux)
     extra_ldflags.append('-fuse-ld=lld')
-    extra_cflags.append('-DDUMMY_clang_linux_version=%s' %
+    extra_cflags.append('-DPLACEHOLDER_clang_linux_version=%s' %
                         api.run.asset_version('clang_linux', skia_dir))
     if 'Static' in extra_tokens:
       extra_ldflags.extend(['-static-libstdc++', '-static-libgcc'])
@@ -254,6 +262,15 @@ def compile_fn(api, checkout_root, out_dir):
     args['skia_use_fontconfig'] = 'false'
   if 'ASAN' in extra_tokens:
     args['skia_enable_spirv_validation'] = 'false'
+  if 'V1only' in extra_tokens:
+    args['skia_enable_skgpu_v1'] = 'true'
+    args['skia_enable_skgpu_v2'] = 'false'
+  if 'V1andV2' in extra_tokens:
+    args['skia_enable_skgpu_v1'] = 'true'
+    args['skia_enable_skgpu_v2'] = 'true'
+  if 'V2only' in extra_tokens:
+    args['skia_enable_skgpu_v1'] = 'false'
+    args['skia_enable_skgpu_v2'] = 'true'
   if 'NoDEPS' in extra_tokens:
     args.update({
       'is_official_build':             'true',
@@ -285,20 +302,6 @@ def compile_fn(api, checkout_root, out_dir):
   if 'Metal' in extra_tokens:
     args['skia_use_metal'] = 'true'
     args['skia_use_gl'] = 'false'
-  if 'OpenCL' in extra_tokens:
-    args['skia_use_opencl'] = 'true'
-    if api.vars.is_linux:
-      extra_cflags.append(
-          '-isystem%s' % api.vars.workdir.join('opencl_headers'))
-      extra_ldflags.append(
-          '-L%s' % api.vars.workdir.join('opencl_ocl_icd_linux'))
-    elif 'Win' in os:
-      extra_cflags.append(
-          '-imsvc%s' % api.vars.workdir.join('opencl_headers'))
-      extra_ldflags.append(
-          '/LIBPATH:%s' %
-          skia_dir.join('third_party', 'externals', 'opencl-lib', '3-0', 'lib',
-                        'x86_64'))
   if 'iOS' in extra_tokens:
     # Bots use Chromium signing cert.
     args['skia_ios_identity'] = '".*GS9WA.*"'
@@ -308,7 +311,7 @@ def compile_fn(api, checkout_root, out_dir):
         'Upstream_Testing_Provisioning_Profile.mobileprovision')
   if compiler == 'Clang' and 'Win' in os:
     args['clang_win'] = '"%s"' % api.vars.workdir.join('clang_win')
-    extra_cflags.append('-DDUMMY_clang_win_version=%s' %
+    extra_cflags.append('-DPLACEHOLDER_clang_win_version=%s' %
                         api.run.asset_version('clang_win', skia_dir))
 
   sanitize = ''

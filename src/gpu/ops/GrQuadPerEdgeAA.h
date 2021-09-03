@@ -17,16 +17,16 @@
 #include "src/gpu/GrVertexWriter.h"
 #include "src/gpu/geometry/GrQuad.h"
 #include "src/gpu/geometry/GrQuadUtils.h"
-#include "src/gpu/ops/GrMeshDrawOp.h"
-#include "src/gpu/ops/GrTextureOp.h"
+#include "src/gpu/ops/TextureOp.h"
 
 class GrCaps;
 class GrColorSpaceXform;
+class GrMeshDrawTarget;
 class GrShaderCaps;
 struct GrVertexWriter;
 
 namespace GrQuadPerEdgeAA {
-    using Saturate = GrTextureOp::Saturate;
+    using Saturate = skgpu::v1::TextureOp::Saturate;
 
     enum class CoverageMode { kNone, kWithPosition, kWithColor };
     enum class Subset : bool { kNo = false, kYes = true };
@@ -178,7 +178,7 @@ namespace GrQuadPerEdgeAA {
 
     // This method will return the correct index buffer for the specified indexBufferOption.
     // It will, correctly, return nullptr if the indexBufferOption is kTriStrips.
-    sk_sp<const GrBuffer> GetIndexBuffer(GrMeshDrawOp::Target*, IndexBufferOption);
+    sk_sp<const GrBuffer> GetIndexBuffer(GrMeshDrawTarget*, IndexBufferOption);
 
     // What is the maximum number of quads allowed for the specified indexBuffer option?
     int QuadLimit(IndexBufferOption);

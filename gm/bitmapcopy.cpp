@@ -48,6 +48,7 @@ static const char* color_type_name(SkColorType colorType) {
         case kA16_float_SkColorType:          return "A16_float";
         case kR16G16_float_SkColorType:       return "R16G16_float";
         case kR16G16B16A16_unorm_SkColorType: return "R16G16B16A16_unorm";
+        case kSRGBA_8888_SkColorType:         return "SRGBA_8888";
     }
     return "";
 }
@@ -132,7 +133,7 @@ class BitmapCopyGM : public skiagm::GM {
             // Draw destination bitmap
             canvas->translate(0, vertOffset);
             x = (width - 40) / SkScalar(2);
-            canvas->drawBitmap(fDst[i], x, 0, &paint);
+            canvas->drawImage(fDst[i].asImage(), x, 0, SkSamplingOptions(), &paint);
             canvas->restore();
 
             canvas->translate(horizOffset, 0);

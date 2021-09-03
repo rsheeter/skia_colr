@@ -223,8 +223,6 @@ BASE_SRCS_ALL = struct(
         "src/utils/win/**/*",
 
         # Exclude multiple definitions.
-        "src/gpu/GrPathRendering_none.cpp",
-        "src/gpu/ccpr/GrCoverageCountingPathRenderer_none.cpp",
         "src/gpu/gl/GrGLMakeNativeInterface_none.cpp",
         "src/pdf/SkDocument_PDF_None.cpp",  # We use src/pdf/SkPDFDocument.cpp.
 
@@ -380,7 +378,7 @@ GL_SRCS_WASM = struct(
     include = [
         "src/gpu/gl/*",
         "src/gpu/gl/builders/*",
-        "src/gpu/gl/GrGLMakeNativeInterface_egl.cpp",
+        "src/gpu/gl/egl/GrGLMakeEGLInterface.cpp",
         "src/gpu/gl/egl/GrGLMakeNativeInterface_egl.cpp",
     ],
     exclude = [
@@ -411,8 +409,8 @@ PORTS_SRCS_WASM = struct(
         #"src/ports/SkFontMgr_custom.cpp",
         "src/ports/SkFontMgr_custom_directory.cpp",
         "src/ports/SkFontMgr_custom_directory_factory.cpp",
-        #"src/ports/SkFontMgr_custom_embedded.cpp",
-        #"src/ports/SkFontMgr_custom_embedded_factory.cpp",
+        "src/ports/SkFontMgr_custom_embedded.cpp",
+        "src/ports/SkFontMgr_custom_embedded_factory.cpp",
         "src/ports/SkFontMgr_custom_empty.cpp",
         "src/ports/SkFontMgr_custom_empty_factory.cpp",
         # "src/ports/SkFontMgr_empty_factory.cpp",
@@ -566,12 +564,13 @@ DM_SRCS_ALL = struct(
         "dm/*.h",
         "experimental/pipe/*.cpp",
         "experimental/pipe/*.h",
-        "experimental/svg/model/*.cpp",
-        "experimental/svg/model/*.h",
         "gm/*.cpp",
         "gm/*.h",
         "gm/verifiers/*.cpp",
         "gm/verifiers/*.h",
+        # TODO(fmalita): SVG sources should not be included here
+        "modules/svg/include/*.h",
+        "modules/svg/src/*.cpp",
         "src/utils/SkMultiPictureDocument.cpp",
         "src/xml/*.cpp",
         "tests/*.cpp",
@@ -593,11 +592,11 @@ DM_SRCS_ALL = struct(
         "tools/ResourceFactory.h",
         "tools/Resources.cpp",
         "tools/Resources.h",
+        "tools/RuntimeBlendUtils.cpp",
+        "tools/RuntimeBlendUtils.h",
         "tools/SkMetaData.cpp",
         "tools/SkMetaData.h",
         "tools/SkSharingProc.cpp",
-        "tools/SkVMBuilders.cpp",
-        "tools/SkVMBuilders.h",
         "tools/ToolUtils.cpp",
         "tools/ToolUtils.h",
         "tools/UrlDataManager.cpp",
@@ -635,6 +634,7 @@ DM_SRCS_ALL = struct(
         "gm/video_decoder.cpp",
         "tests/FontMgrAndroidParserTest.cpp",  # Android-only.
         "tests/FontMgrFontConfigTest.cpp",  # FontConfig-only.
+        "tests/TypefaceMacTest.cpp",  # CoreText-only.
         "tests/SkParagraphTest.cpp",  # Skipping tests for now.
         "tests/skia_test.cpp",  # Old main.
         "tools/gpu/d3d/*",
@@ -659,12 +659,12 @@ def dm_srcs(os_conditions):
     return skia_glob(DM_SRCS_ALL) + skia_select(
         os_conditions,
         [
-            ["tests/FontMgrFontConfigTest.cpp"],
-            ["tests/FontMgrAndroidParserTest.cpp"],
-            [],  # iOS
+            ["tests/FontMgrFontConfigTest.cpp"],  # Unix
+            ["tests/FontMgrAndroidParserTest.cpp"],  # Android
+            ["tests/TypefaceMacTest.cpp"],  # iOS
             [],  # WASM
             [],  # Fuchsia
-            [],  # macOS
+            ["tests/TypefaceMacTest.cpp"],  # macOS
         ],
     )
 
@@ -721,9 +721,8 @@ def base_defines(os_conditions):
         "SK_BUILD_FOR_GOOGLE3",
         # Required for building dm.
         "GR_TEST_UTILS",
-        # Google3 probably doesn't want this feature yet
-        "SK_DISABLE_REDUCE_OPLIST_SPLITTING",
         # Staging flags for API changes
+        "SK_PARAGRAPH_GRAPHEME_EDGES",
         # Should remove after we update golden images
         "SK_WEBP_ENCODER_USE_DEFAULT_METHOD",
         # Experiment to diagnose image diffs in Google3
@@ -731,8 +730,7 @@ def base_defines(os_conditions):
         # JPEG is in codec_limited
         "SK_CODEC_DECODES_JPEG",
         "SK_ENCODE_JPEG",
-        # Needed for some tests in dm
-        "SK_ENABLE_SKSL_INTERPRETER",
+        "SK_HAS_ANDROID_CODEC",
     ] + skia_select(
         os_conditions,
         [
@@ -759,7 +757,6 @@ def base_defines(os_conditions):
             # IOS
             [
                 "SK_BUILD_FOR_IOS",
-                "SK_BUILD_NO_OPTS",
                 "SKNX_NO_SIMD",
                 "SK_NO_COMMAND_BUFFER",  # Test tools that use thread_local.
                 "SK_GL",
@@ -769,7 +766,6 @@ def base_defines(os_conditions):
                 "SK_DISABLE_LEGACY_SHADERCONTEXT",
                 "SK_DISABLE_TRACING",
                 "SK_GL",
-                "GR_GL_CHECK_ALLOC_WITH_GET_ERROR=0",
                 "SK_SUPPORT_GPU=1",
                 "SK_DISABLE_AAA",
                 "SK_DISABLE_EFFECT_DESERIALIZATION",
@@ -789,7 +785,6 @@ def base_defines(os_conditions):
             # MACOS
             [
                 "SK_BUILD_FOR_MAC",
-                "SK_BUILD_NO_OPTS",
                 "SK_GL",
             ],
         ],
@@ -945,13 +940,26 @@ SKOTTIE_TOOL_SRCS = [
 ## SkShaper
 ################################################################################
 
+# Stubs, pending SkUnicode fission
+SKUNICODE_ICU_BUILTIN_SRCS = [
+    "modules/skunicode/include/SkUnicode.h",
+    "modules/skunicode/src/SkUnicode_icu.cpp",
+    "modules/skunicode/src/SkUnicode_icu.h",
+    "modules/skunicode/src/SkUnicode_icu_builtin.cpp",
+]
+
+SKUNICODE_ICU_RUNTIME_SRCS = [
+    "modules/skunicode/include/SkUnicode.h",
+    "modules/skunicode/src/SkUnicode_icu.cpp",
+    "modules/skunicode/src/SkUnicode_icu.h",
+    "modules/skunicode/src/SkUnicode_icu_runtime.cpp",
+]
+
 SKSHAPER_HARFBUZZ_SRCS = [
     "modules/skshaper/include/SkShaper.h",
     "modules/skshaper/src/SkShaper.cpp",
     "modules/skshaper/src/SkShaper_harfbuzz.cpp",
     "modules/skshaper/src/SkShaper_primitive.cpp",
-    "modules/skshaper/src/SkUnicode.h",
-    "modules/skshaper/src/SkUnicode_icu.cpp",
 ]
 
 SKSHAPER_PRIMITIVE_SRCS = [
@@ -980,4 +988,25 @@ SKOTTIE_IOS_LIB_HDRS = [
 SKOTTIE_IOS_LIB_SDK_FRAMEWORKS = [
     "Foundation",
     "UIKit",
+]
+
+################################################################################
+## svg_lib
+################################################################################
+
+def svg_lib_hdrs():
+    return native.glob(["modules/svg/include/*.h"])
+
+def svg_lib_srcs():
+    return native.glob(["modules/svg/src/*.cpp"])
+
+################################################################################
+## svg_tool
+################################################################################
+
+SVG_TOOL_SRCS = [
+    "modules/svg/utils/SvgTool.cpp",
+    # TODO(benjaminwagner): Add "flags" target.
+    "tools/flags/CommandLineFlags.cpp",
+    "tools/flags/CommandLineFlags.h",
 ]

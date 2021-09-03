@@ -94,6 +94,11 @@ public:
     GrFragmentProcessor* getCoverageFragmentProcessor() const {
         return fCoverageFragmentProcessor.get();
     }
+    bool usesLocalCoords() const {
+        // The sample coords for the top level FPs are implicitly the GP's local coords.
+        return (fColorFragmentProcessor && fColorFragmentProcessor->usesSampleCoords()) ||
+               (fCoverageFragmentProcessor && fCoverageFragmentProcessor->usesSampleCoords());
+    }
 
     /**
      * Returns true if the paint's output color will be constant after blending. If the result is

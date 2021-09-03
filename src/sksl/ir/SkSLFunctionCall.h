@@ -8,6 +8,7 @@
 #ifndef SKSL_FUNCTIONCALL
 #define SKSL_FUNCTIONCALL
 
+#include "include/private/SkTArray.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
 
@@ -16,72 +17,52 @@ namespace SkSL {
 /**
  * A function invocation.
  */
-class FunctionCall : public Expression {
+class FunctionCall final : public Expression {
 public:
     static constexpr Kind kExpressionKind = Kind::kFunctionCall;
 
     FunctionCall(int offset, const Type* type, const FunctionDeclaration* function,
-                 std::vector<std::unique_ptr<Expression>> arguments)
-    : INHERITED(offset, FunctionCallData{type, function}) {
-        fExpressionChildren = std::move(arguments);
-        ++this->function().callCount();
-    }
+                 ExpressionArray arguments)
+        : INHERITED(offset, kExpressionKind, type)
+        , fFunction(*function)
+        , fArguments(std::move(arguments)) {}
 
-    ~FunctionCall() override {
-        --this->function().callCount();
-    }
+    // Resolves generic types, performs type conversion on arguments, determines return type, and
+    // reports errors via the ErrorReporter.
+    static std::unique_ptr<Expression> Convert(const Context& context,
+                                               int offset,
+                                               const FunctionDeclaration& function,
+                                               ExpressionArray arguments);
 
-    const Type& type() const override {
-        return *this->functionCallData().fType;
-    }
+    // Creates the function call; reports errors via ASSERT.
+    static std::unique_ptr<Expression> Make(const Context& context,
+                                            int offset,
+                                            const Type* returnType,
+                                            const FunctionDeclaration& function,
+                                            ExpressionArray arguments);
 
     const FunctionDeclaration& function() const {
-        return *this->functionCallData().fFunction;
+        return fFunction;
     }
 
-    std::vector<std::unique_ptr<Expression>>& arguments() {
-        return fExpressionChildren;
+    ExpressionArray& arguments() {
+        return fArguments;
     }
 
-    const std::vector<std::unique_ptr<Expression>>& arguments() const {
-        return fExpressionChildren;
+    const ExpressionArray& arguments() const {
+        return fArguments;
     }
 
-    bool hasProperty(Property property) const override {
-        if (property == Property::kSideEffects && (this->function().modifiers().fFlags &
-                                                   Modifiers::kHasSideEffects_Flag)) {
-            return true;
-        }
-        for (const auto& arg : this->arguments()) {
-            if (arg->hasProperty(property)) {
-                return true;
-            }
-        }
-        return false;
-    }
+    bool hasProperty(Property property) const override;
 
-    std::unique_ptr<Expression> clone() const override {
-        std::vector<std::unique_ptr<Expression>> cloned;
-        for (const auto& arg : this->arguments()) {
-            cloned.push_back(arg->clone());
-        }
-        return std::unique_ptr<Expression>(new FunctionCall(fOffset, &this->type(),
-                                                            &this->function(), std::move(cloned)));
-    }
+    std::unique_ptr<Expression> clone() const override;
 
-    String description() const override {
-        String result = String(this->function().name()) + "(";
-        String separator;
-        for (size_t i = 0; i < this->arguments().size(); i++) {
-            result += separator;
-            result += this->arguments()[i]->description();
-            separator = ", ";
-        }
-        result += ")";
-        return result;
-    }
+    String description() const override;
 
 private:
+    const FunctionDeclaration& fFunction;
+    ExpressionArray fArguments;
+
     using INHERITED = Expression;
 };
 

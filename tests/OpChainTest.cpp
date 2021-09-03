@@ -6,13 +6,13 @@
  */
 
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrMemoryPool.h"
 #include "src/gpu/GrOpFlushState.h"
-#include "src/gpu/GrOpsTask.h"
 #include "src/gpu/GrProxyProvider.h"
 #include "src/gpu/GrRecordingContextPriv.h"
 #include "src/gpu/ops/GrOp.h"
+#include "src/gpu/ops/OpsTask.h"
 #include "tests/Test.h"
 #include <iterator>
 
@@ -97,10 +97,9 @@ class TestOp : public GrOp {
 public:
     DEFINE_OP_CLASS_ID
 
-    static std::unique_ptr<TestOp> Make(GrRecordingContext* context, int value, const Range& range,
-                                        int result[], const Combinable* combinable) {
-        GrOpMemoryPool* pool = context->priv().opMemoryPool();
-        return pool->allocate<TestOp>(value, range, result, combinable);
+    static GrOp::Owner Make(GrRecordingContext* context, int value, const Range& range,
+                            int result[], const Combinable* combinable) {
+        return GrOp::Make<TestOp>(context, value, range, result, combinable);
     }
 
     const char* name() const override { return "TestOp"; }
@@ -116,7 +115,7 @@ public:
     }
 
 private:
-    friend class ::GrOpMemoryPool;  // for ctor
+    friend class ::GrOp;  // for ctor
 
     TestOp(int value, const Range& range, int result[], const Combinable* combinable)
             : INHERITED(ClassID()), fResult(result), fCombinable(combinable) {
@@ -126,10 +125,11 @@ private:
     }
 
     void onPrePrepare(GrRecordingContext*,
-                      const GrSurfaceProxyView* writeView,
+                      const GrSurfaceProxyView& writeView,
                       GrAppliedClip*,
-                      const GrXferProcessor::DstProxyView&,
-                      GrXferBarrierFlags renderPassXferBarriers) override {}
+                      const GrDstProxyView&,
+                      GrXferBarrierFlags renderPassXferBarriers,
+                      GrLoadOp colorLoadOp) override {}
 
     void onPrepare(GrOpFlushState*) override {}
 
@@ -139,9 +139,8 @@ private:
         }
     }
 
-    CombineResult onCombineIfPossible(GrOp* t, GrRecordingContext::Arenas* arenas,
-                                      const GrCaps&) override {
-        // This op doesn't use the arenas, but make sure the GrOpsTask is sending it
+    CombineResult onCombineIfPossible(GrOp* t, SkArenaAlloc* arenas, const GrCaps&) override {
+        // This op doesn't use the arenas, but make sure the OpsTask is sending it
         SkASSERT(arenas);
         (void) arenas;
         auto that = t->cast<TestOp>();
@@ -206,6 +205,7 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
     bool repeat = false;
     Combinable combinable;
     GrDrawingManager* drawingMgr = dContext->priv().drawingManager();
+    sk_sp<GrArenas> arenas = sk_make_sp<GrArenas>();
     for (int p = 0; p < kNumPermutations; ++p) {
         for (int i = 0; i < kNumOps - 2 && !repeat; ++i) {
             // The current implementation of nextULessThan() is biased. :(
@@ -220,10 +220,10 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
                 GrOpFlushState flushState(dContext->priv().getGpu(),
                                           dContext->priv().resourceProvider(),
                                           &tracker);
-                GrOpsTask opsTask(drawingMgr,
-                                  dContext->priv().arenas(),
-                                  GrSurfaceProxyView(proxy, kOrigin, writeSwizzle),
-                                  dContext->priv().auditTrail());
+                skgpu::v1::OpsTask opsTask(drawingMgr,
+                                           GrSurfaceProxyView(proxy, kOrigin, writeSwizzle),
+                                           dContext->priv().auditTrail(),
+                                           arenas);
                 // This assumes the particular values of kRanges.
                 std::fill_n(result, result_width(), -1);
                 std::fill_n(validResult, result_width(), -1);
@@ -236,12 +236,13 @@ DEF_GPUTEST(OpChainTest, reporter, /*ctxInfo*/) {
                     Range range = kRanges[j / kNumOpPositions];
                     range.fOffset += pos;
                     auto op = TestOp::Make(dContext.get(), value, range, result, &combinable);
-                    op->writeResult(validResult);
+                    TestOp* testOp = (TestOp*)op.get();
+                    testOp->writeResult(validResult);
                     opsTask.addOp(drawingMgr, std::move(op),
                                   GrTextureResolveManager(dContext->priv().drawingManager()),
                                   *caps);
                 }
-                opsTask.makeClosed(*caps);
+                opsTask.makeClosed(dContext.get());
                 opsTask.prepare(&flushState);
                 opsTask.execute(&flushState);
                 opsTask.endFlush(drawingMgr);

@@ -9,6 +9,7 @@
 #include "include/core/SkMallocPixelRef.h"
 #include "include/private/SkFloatBits.h"
 #include "include/private/SkHalf.h"
+#include "include/private/SkTPin.h"
 #include "include/private/SkVx.h"
 #include "src/core/SkColorSpacePriv.h"
 #include "src/core/SkConvertPixels.h"
@@ -138,7 +139,7 @@ SkGradientShaderBase::SkGradientShaderBase(const Descriptor& desc, const SkMatri
 
     /*  Note: we let the caller skip the first and/or last position.
         i.e. pos[0] = 0.3, pos[1] = 0.7
-        In these cases, we insert dummy entries to ensure that the final data
+        In these cases, we insert entries to ensure that the final data
         will be bracketed by [0, 1].
         i.e. our_pos[0] = 0, our_pos[1] = 0.3, our_pos[2] = 0.7, our_pos[3] = 1
 
@@ -148,13 +149,13 @@ SkGradientShaderBase::SkGradientShaderBase(const Descriptor& desc, const SkMatri
             fColorCount = 4
      */
     fColorCount = desc.fCount;
-    // check if we need to add in dummy start and/or end position/colors
-    bool dummyFirst = false;
-    bool dummyLast = false;
+    // check if we need to add in start and/or end position/colors
+    bool needsFirst = false;
+    bool needsLast = false;
     if (desc.fPos) {
-        dummyFirst = desc.fPos[0] != 0;
-        dummyLast = desc.fPos[desc.fCount - 1] != SK_Scalar1;
-        fColorCount += dummyFirst + dummyLast;
+        needsFirst = desc.fPos[0] != 0;
+        needsLast = desc.fPos[desc.fCount - 1] != SK_Scalar1;
+        fColorCount += needsFirst + needsLast;
     }
 
     size_t storageSize = fColorCount * (sizeof(SkColor4f) + (desc.fPos ? sizeof(SkScalar) : 0));
@@ -164,14 +165,14 @@ SkGradientShaderBase::SkGradientShaderBase(const Descriptor& desc, const SkMatri
 
     // Now copy over the colors, adding the dummies as needed
     SkColor4f* origColors = fOrigColors4f;
-    if (dummyFirst) {
+    if (needsFirst) {
         *origColors++ = desc.fColors[0];
     }
     for (int i = 0; i < desc.fCount; ++i) {
         origColors[i] = desc.fColors[i];
         fColorsAreOpaque = fColorsAreOpaque && (desc.fColors[i].fA == 1);
     }
-    if (dummyLast) {
+    if (needsLast) {
         origColors += desc.fCount;
         *origColors = desc.fColors[desc.fCount - 1];
     }
@@ -181,8 +182,8 @@ SkGradientShaderBase::SkGradientShaderBase(const Descriptor& desc, const SkMatri
         SkScalar* origPosPtr = fOrigPos;
         *origPosPtr++ = prev; // force the first pos to 0
 
-        int startIndex = dummyFirst ? 0 : 1;
-        int count = desc.fCount + dummyLast;
+        int startIndex = needsFirst ? 0 : 1;
+        int count = desc.fCount + needsLast;
 
         bool uniformStops = true;
         const SkScalar uniformStep = desc.fPos[startIndex] - prev;
@@ -368,7 +369,7 @@ bool SkGradientShaderBase::onAppendStages(const SkStageRec& rec) const {
 
             ctx->ts = alloc->makeArray<float>(fColorCount+1);
 
-            // Remove the dummy stops inserted by SkGradientShaderBase::SkGradientShaderBase
+            // Remove the default stops inserted by SkGradientShaderBase::SkGradientShaderBase
             // because they are naturally handled by the search method.
             int firstStop;
             int lastStop;
@@ -423,7 +424,7 @@ skvm::Color SkGradientShaderBase::onProgram(skvm::Builder* p,
                                             skvm::Coord device, skvm::Coord local,
                                             skvm::Color /*paint*/,
                                             const SkMatrixProvider& mats, const SkMatrix* localM,
-                                            SkFilterQuality quality, const SkColorInfo& dstInfo,
+                                            const SkColorInfo& dstInfo,
                                             skvm::Uniforms* uniforms, SkArenaAlloc* alloc) const {
     SkMatrix inv;
     if (!this->computeTotalInverse(mats.localToDevice(), localM, &inv)) {
@@ -472,8 +473,8 @@ skvm::Color SkGradientShaderBase::onProgram(skvm::Builder* p,
     }
 
     std::vector<float> rgba(4*fColorCount);  // TODO: SkSTArray?
-    SkConvertPixels(dst,   rgba.data(), dst.minRowBytes(),
-                    src, fOrigColors4f, src.minRowBytes());
+    SkAssertResult(SkConvertPixels(dst,   rgba.data(), dst.minRowBytes(),
+                                   src, fOrigColors4f, src.minRowBytes()));
 
     // Transform our colors into a scale factor f and bias b such that for
     // any t between stops i and i+1, the color we want is mad(t, f[i], b[i]).
@@ -557,7 +558,7 @@ skvm::Color SkGradientShaderBase::onProgram(skvm::Builder* p,
                 // ix -= (t >= stop) ? -1 : 0
                 ix -= (t >= uniformF(stop));
             }
-            // TODO: we could skip any of the dummy stops GradientShaderBase's ctor added
+            // TODO: we could skip any of the default stops GradientShaderBase's ctor added
             // to ensure the full [0,1] span is covered.  This linear search doesn't need
             // them for correctness, and it'd be up to two fewer stops to check.
             // N.B. we do still need those stops for the fOrigPos == nullptr direct math path.
@@ -592,10 +593,10 @@ skvm::Color SkGradientShaderBase::onProgram(skvm::Builder* p,
     }
 
     return {
-        bit_cast(mask & bit_cast(color.r)),
-        bit_cast(mask & bit_cast(color.g)),
-        bit_cast(mask & bit_cast(color.b)),
-        bit_cast(mask & bit_cast(color.a)),
+        pun_to_F32(mask & pun_to_I32(color.r)),
+        pun_to_F32(mask & pun_to_I32(color.g)),
+        pun_to_F32(mask & pun_to_I32(color.b)),
+        pun_to_F32(mask & pun_to_I32(color.a)),
     };
 }
 
@@ -636,8 +637,10 @@ SkColor4fXformer::SkColor4fXformer(const SkColor4f* colors, int colorCount,
 
         auto info = SkImageInfo::Make(colorCount,1, kRGBA_F32_SkColorType, kUnpremul_SkAlphaType);
 
-        SkConvertPixels(info.makeColorSpace(sk_ref_sp(dst)), fStorage.begin(), info.minRowBytes(),
-                        info.makeColorSpace(sk_ref_sp(src)), fColors         , info.minRowBytes());
+        auto dstInfo = info.makeColorSpace(sk_ref_sp(dst));
+        auto srcInfo = info.makeColorSpace(sk_ref_sp(src));
+        SkAssertResult(SkConvertPixels(dstInfo, fStorage.begin(), info.minRowBytes(),
+                                       srcInfo, fColors         , info.minRowBytes()));
 
         fColors = fStorage.begin();
     }
@@ -702,26 +705,36 @@ static SkColor4f average_gradient_color(const SkColor4f colors[], const SkScalar
 
         // when pos == null, there are colorCount uniformly distributed stops, going from 0 to 1,
         // so pos[i + 1] - pos[i] = 1/(colorCount-1)
-        SkScalar w = pos ? (pos[i + 1] - pos[i])
-                         : (1.0f / (colorCount - 1));
+        SkScalar w;
+        if (pos) {
+            // Match position fixing in SkGradientShader's constructor, clamping positions outside
+            // [0, 1] and forcing the sequence to be monotonic
+            SkScalar p0 = SkTPin(pos[i], 0.f, 1.f);
+            SkScalar p1 = SkTPin(pos[i + 1], p0, 1.f);
+            w = p1 - p0;
+
+            // And account for any implicit intervals at the start or end of the positions
+            if (i == 0) {
+                if (p0 > 0.0f) {
+                    // The first color is fixed between p = 0 to pos[0], so 0.5*(ci + cj)*(pj - pi)
+                    // becomes 0.5*(c + c)*(pj - 0) = c * pj
+                    Sk4f c = Sk4f::Load(&colors[0]);
+                    blend += p0 * c;
+                }
+            }
+            if (i == colorCount - 2) {
+                if (p1 < 1.f) {
+                    // The last color is fixed between pos[n-1] to p = 1, so 0.5*(ci + cj)*(pj - pi)
+                    // becomes 0.5*(c + c)*(1 - pi) = c * (1 - pi)
+                    Sk4f c = Sk4f::Load(&colors[colorCount - 1]);
+                    blend += (1.f - p1) * c;
+                }
+            }
+        } else {
+            w = 1.f / (colorCount - 1);
+        }
 
         blend += 0.5f * w * (c1 + c0);
-    }
-
-    // Now account for any implicit intervals at the start or end of the stop definitions
-    if (pos) {
-        if (pos[0] > 0.0) {
-            // The first color is fixed between p = 0 to pos[0], so 0.5 * (ci + cj) * (pj - pi)
-            // becomes 0.5 * (c + c) * (pj - 0) = c * pj
-            Sk4f c = Sk4f::Load(&colors[0]);
-            blend += pos[0] * c;
-        }
-        if (pos[colorCount - 1] < SK_Scalar1) {
-            // The last color is fixed between pos[n-1] to p = 1, so 0.5 * (ci + cj) * (pj - pi)
-            // becomes 0.5 * (c + c) * (1 - pi) = c * (1 - pi)
-            Sk4f c = Sk4f::Load(&colors[colorCount - 1]);
-            blend += (1 - pos[colorCount - 1]) * c;
-        }
     }
 
     SkColor4f avg;

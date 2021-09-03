@@ -22,7 +22,7 @@
 // prepared to rename those identifiers. Otherwise use GrD3DTypesMinimal.h.
 
 #include "include/core/SkRefCnt.h"
-#include "include/gpu/d3d/GrD3DTypesMinimal.h"
+#include "include/gpu/GrTypes.h"
 #include <d3d12.h>
 #include <dxgi1_4.h>
 
@@ -166,6 +166,11 @@ public:
                                                  D3D12_RESOURCE_STATES initialResourceState,
                                                  sk_sp<GrD3DAlloc>* allocation,
                                                  const D3D12_CLEAR_VALUE*) = 0;
+    virtual gr_cp<ID3D12Resource> createAliasingResource(sk_sp<GrD3DAlloc>& allocation,
+                                                         uint64_t localOffset,
+                                                         const D3D12_RESOURCE_DESC*,
+                                                         D3D12_RESOURCE_STATES initialResourceState,
+                                                         const D3D12_CLEAR_VALUE*) = 0;
 };
 
 // Note: there is no notion of Borrowed or Adopted resources in the D3D backend,
@@ -201,10 +206,10 @@ struct GrD3DTextureResourceInfo {
             , fProtected(isProtected) {}
 
     GrD3DTextureResourceInfo(const GrD3DTextureResourceInfo& info,
-                             GrD3DResourceStateEnum resourceState)
+                             D3D12_RESOURCE_STATES resourceState)
             : fResource(info.fResource)
             , fAlloc(info.fAlloc)
-            , fResourceState(static_cast<D3D12_RESOURCE_STATES>(resourceState))
+            , fResourceState(resourceState)
             , fFormat(info.fFormat)
             , fSampleCount(info.fSampleCount)
             , fLevelCount(info.fLevelCount)

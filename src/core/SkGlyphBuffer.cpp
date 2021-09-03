@@ -33,7 +33,7 @@ void SkDrawableGlyphBuffer::startSource(const SkZip<const SkGlyphID, const SkPoi
     memcpy(fPositions, positions.data(), positions.size() * sizeof(SkPoint));
 
     // Convert from SkGlyphIDs to SkPackedGlyphIDs.
-    SkGlyphVariant* packedIDCursor = fMultiBuffer;
+    SkGlyphVariant* packedIDCursor = fMultiBuffer.get();
     for (auto t : source) {
         *packedIDCursor++ = SkPackedGlyphID{std::get<0>(t)};
     }
@@ -61,24 +61,25 @@ void SkDrawableGlyphBuffer::startBitmapDevice(
     // Convert glyph ids and positions to packed glyph ids.
     SkZip<const SkGlyphID, const SkPoint> withMappedPos =
             SkMakeZip(source.get<0>(), fPositions.get());
-    SkGlyphVariant* packedIDCursor = fMultiBuffer;
+    SkGlyphVariant* packedIDCursor = fMultiBuffer.get();
     for (auto [glyphID, pos] : withMappedPos) {
         *packedIDCursor++ = SkPackedGlyphID{glyphID, pos, mask};
     }
     SkDEBUGCODE(fPhase = kInput);
 }
 
-SkPoint SkDrawableGlyphBuffer::startGPUDevice(
+void SkDrawableGlyphBuffer::startGPUDevice(
         const SkZip<const SkGlyphID, const SkPoint>& source,
-        SkPoint origin, const SkMatrix& viewMatrix,
+        const SkMatrix& drawMatrix,
         const SkGlyphPositionRoundingSpec& roundingSpec) {
     fInputSize = source.size();
     fDrawableSize = 0;
 
-    SkMatrix device = viewMatrix;
+    // Build up the mapping from source space to device space. Add the rounding constant
+    // halfSampleFreq so we just need to floor to get the device result.
+    SkMatrix device = drawMatrix;
     SkPoint halfSampleFreq = roundingSpec.halfAxisSampleFreq;
     device.postTranslate(halfSampleFreq.x(), halfSampleFreq.y());
-    device.preTranslate(origin.x(), origin.y());
 
     auto positions = source.get<1>();
     device.mapPoints(fPositions, positions.data(), positions.size());
@@ -87,21 +88,26 @@ SkPoint SkDrawableGlyphBuffer::startGPUDevice(
         return {SkScalarFloorToScalar(pt.x()), SkScalarFloorToScalar(pt.y())};
     };
 
-    // q = [Q](0,0,1) = [R][V][O](0,0,1).
-    SkPoint q = device.mapXY(0, 0);
-    SkPoint qFloor = floor(q);
-
     for (auto [packedGlyphID, glyphID, pos]
             : SkMakeZip(fMultiBuffer.get(), source.get<0>(), fPositions.get())) {
         packedGlyphID = SkPackedGlyphID{glyphID, pos, roundingSpec.ignorePositionFieldMask};
-        pos = floor(pos - qFloor);
+        // Store rounded device coords back in pos.
+        pos = floor(pos);
     }
 
     SkDEBUGCODE(fPhase = kInput);
-    // Return the residual = Floor(q) - q + (rx,ry,0).
-    return qFloor - q + roundingSpec.halfAxisSampleFreq;
 }
 
+SkString SkDrawableGlyphBuffer::dumpInput() const {
+    SkASSERT(fPhase == kInput);
+
+    SkString msg;
+    for (auto [packedGlyphID, pos]
+            : SkZip<SkGlyphVariant, SkPoint>{fInputSize, fMultiBuffer.get(), fPositions.get()}) {
+        msg.appendf("0x%x:(%a,%a), ", packedGlyphID.packedID().value(), pos.x(), pos.y());
+    }
+    return msg;
+}
 
 void SkDrawableGlyphBuffer::reset() {
     SkDEBUGCODE(fPhase = kReset);

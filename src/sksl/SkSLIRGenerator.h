@@ -11,20 +11,18 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "include/private/SkSLModifiers.h"
+#include "include/private/SkSLStatement.h"
 #include "src/sksl/SkSLASTFile.h"
 #include "src/sksl/SkSLASTNode.h"
-#include "src/sksl/SkSLErrorReporter.h"
-#include "src/sksl/SkSLInliner.h"
+#include "src/sksl/SkSLOperators.h"
 #include "src/sksl/ir/SkSLBlock.h"
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExtension.h"
 #include "src/sksl/ir/SkSLFunctionDefinition.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
-#include "src/sksl/ir/SkSLModifiers.h"
 #include "src/sksl/ir/SkSLModifiersDeclaration.h"
 #include "src/sksl/ir/SkSLProgram.h"
-#include "src/sksl/ir/SkSLSection.h"
-#include "src/sksl/ir/SkSLStatement.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
 #include "src/sksl/ir/SkSLType.h"
 #include "src/sksl/ir/SkSLTypeReference.h"
@@ -33,7 +31,17 @@
 
 namespace SkSL {
 
+namespace dsl {
+    class DSLCore;
+    class DSLFunction;
+    class DSLVar;
+    class DSLWriter;
+}
+
+class ExternalFunction;
 class FunctionCall;
+class StructDefinition;
+struct ParsedModule;
 struct Swizzle;
 
 /**
@@ -94,158 +102,181 @@ private:
  */
 class IRGenerator {
 public:
-    IRGenerator(const Context* context, Inliner* inliner, std::shared_ptr<SymbolTable> root,
-                ErrorReporter& errorReporter);
+    IRGenerator(const Context* context);
 
-    void convertProgram(Program::Kind kind,
-                        const char* text,
-                        size_t length,
-                        std::vector<std::unique_ptr<ProgramElement>>* result);
-
-    /**
-     * If both operands are compile-time constants and can be folded, returns an expression
-     * representing the folded value. Otherwise, returns null. Note that unlike most other functions
-     * here, null does not represent a compilation error.
-     */
-    std::unique_ptr<Expression> constantFold(const Expression& left,
-                                             Token::Kind op,
-                                             const Expression& right) const;
-
-    // both of these functions return null and report an error if the setting does not exist
-    const Type* typeForSetting(int offset, String name) const;
-    std::unique_ptr<Expression> valueForSetting(int offset, String name) const;
-
-    Program::Inputs fInputs;
-    const Program::Settings* fSettings;
-    const Context& fContext;
-    Program::Kind fKind;
-
-private:
-    /**
-     * Prepare to compile a program. Resets state, pushes a new symbol table, and installs the
-     * settings.
-     */
-    void start(const Program::Settings* settings,
-               std::shared_ptr<SymbolTable> baseSymbolTable,
-               bool isBuiltinCode = false);
+    struct IRBundle {
+        std::vector<std::unique_ptr<ProgramElement>> fElements;
+        std::vector<const ProgramElement*>           fSharedElements;
+        std::shared_ptr<SymbolTable>                 fSymbolTable;
+        Program::Inputs                              fInputs;
+    };
 
     /**
-     * Performs cleanup after compilation is complete.
+     * If externalFunctions is supplied, those values are registered in the symbol table of the
+     * Program, but ownership is *not* transferred. It is up to the caller to keep them alive.
      */
-    void finish();
+    IRBundle convertProgram(
+            const ParsedModule& base,
+            bool isBuiltinCode,
+            skstd::string_view text);
 
-    /**
-     * Relinquishes ownership of the Modifiers that have been collected so far and returns them.
-     */
-    std::unique_ptr<ModifiersPool> releaseModifiers();
+    const Program::Settings& settings() const { return fContext.fConfig->fSettings; }
+    ProgramKind programKind() const { return fContext.fConfig->fKind; }
+
+    ErrorReporter& errorReporter() const { return *fContext.fErrors; }
+
+    std::shared_ptr<SymbolTable>& symbolTable() {
+        return fSymbolTable;
+    }
+
+    void setSymbolTable(std::shared_ptr<SymbolTable>& symbolTable) {
+        fSymbolTable = symbolTable;
+    }
 
     void pushSymbolTable();
     void popSymbolTable();
 
-    void checkModifiers(int offset, const Modifiers& modifiers, int permitted);
-    std::vector<std::unique_ptr<Statement>> convertVarDeclarations(const ASTNode& decl,
-                                                                   Variable::Storage storage);
+    static void CheckModifiers(const Context& context,
+                               int offset,
+                               const Modifiers& modifiers,
+                               int permittedModifierFlags,
+                               int permittedLayoutFlags);
+
+    std::unique_ptr<Expression> convertIdentifier(int offset, skstd::string_view identifier);
+
+    bool haveRTAdjustInterfaceBlock() { return fRTAdjustInterfaceBlock != nullptr; }
+
+    int getRTAdjustFieldIndex() { return fRTAdjustFieldIndex; }
+
+    const Context& fContext;
+
+private:
+    void start(const ParsedModule& base,
+               bool isBuiltinCode,
+               std::vector<std::unique_ptr<ProgramElement>>* elements,
+               std::vector<const ProgramElement*>* sharedElements);
+
+    IRGenerator::IRBundle finish();
+
+    void checkVarDeclaration(int offset,
+                             const Modifiers& modifiers,
+                             const Type* baseType,
+                             Variable::Storage storage);
+    std::unique_ptr<Variable> convertVar(int offset, const Modifiers& modifiers,
+                                         const Type* baseType, skstd::string_view name,
+                                         bool isArray, std::unique_ptr<Expression> arraySize,
+                                         Variable::Storage storage);
+    std::unique_ptr<Statement> convertVarDeclaration(std::unique_ptr<Variable> var,
+                                                     std::unique_ptr<Expression> value,
+                                                     bool addToSymbolTable = true);
+    std::unique_ptr<Statement> convertVarDeclaration(int offset, const Modifiers& modifiers,
+                                                     const Type* baseType, skstd::string_view name,
+                                                     bool isArray,
+                                                     std::unique_ptr<Expression> arraySize,
+                                                     std::unique_ptr<Expression> value,
+                                                     Variable::Storage storage);
+    StatementArray convertVarDeclarations(const ASTNode& decl, Variable::Storage storage);
     void convertFunction(const ASTNode& f);
-    std::unique_ptr<Statement> convertSingleStatement(const ASTNode& statement);
     std::unique_ptr<Statement> convertStatement(const ASTNode& statement);
     std::unique_ptr<Expression> convertExpression(const ASTNode& expression);
     std::unique_ptr<ModifiersDeclaration> convertModifiersDeclaration(const ASTNode& m);
 
     const Type* convertType(const ASTNode& type, bool allowVoid = false);
     std::unique_ptr<Expression> call(int offset,
+                                     std::unique_ptr<Expression> function,
+                                     ExpressionArray arguments);
+    std::unique_ptr<Expression> call(int offset,
                                      const FunctionDeclaration& function,
-                                     std::vector<std::unique_ptr<Expression>> arguments);
+                                     ExpressionArray arguments);
     CoercionCost callCost(const FunctionDeclaration& function,
-                          const std::vector<std::unique_ptr<Expression>>& arguments);
-    std::unique_ptr<Expression> call(int offset, std::unique_ptr<Expression> function,
-                                     std::vector<std::unique_ptr<Expression>> arguments);
-    CoercionCost coercionCost(const Expression& expr, const Type& type);
+                          const ExpressionArray& arguments);
     std::unique_ptr<Expression> coerce(std::unique_ptr<Expression> expr, const Type& type);
+    CoercionCost coercionCost(const Expression& expr, const Type& type);
+    int convertArraySize(const Type& type, int offset, const ASTNode& s);
+    bool containsConstantZero(Expression& expr);
+    bool dividesByZero(Operator op, Expression& right);
     std::unique_ptr<Block> convertBlock(const ASTNode& block);
     std::unique_ptr<Statement> convertBreak(const ASTNode& b);
-    std::unique_ptr<Expression> convertNumberConstructor(
-                                                   int offset,
-                                                   const Type& type,
-                                                   std::vector<std::unique_ptr<Expression>> params);
-    std::unique_ptr<Expression> convertCompoundConstructor(
-                                                   int offset,
-                                                   const Type& type,
-                                                   std::vector<std::unique_ptr<Expression>> params);
-    std::unique_ptr<Expression> convertConstructor(int offset,
-                                                   const Type& type,
-                                                   std::vector<std::unique_ptr<Expression>> params);
     std::unique_ptr<Statement> convertContinue(const ASTNode& c);
     std::unique_ptr<Statement> convertDiscard(const ASTNode& d);
     std::unique_ptr<Statement> convertDo(const ASTNode& d);
     std::unique_ptr<Statement> convertSwitch(const ASTNode& s);
     std::unique_ptr<Expression> convertBinaryExpression(const ASTNode& expression);
-    std::unique_ptr<Extension> convertExtension(int offset, StringFragment name);
+    std::unique_ptr<Extension> convertExtension(int offset, skstd::string_view name);
     std::unique_ptr<Statement> convertExpressionStatement(const ASTNode& s);
+    std::unique_ptr<Expression> convertField(std::unique_ptr<Expression> base,
+                                             skstd::string_view field);
     std::unique_ptr<Statement> convertFor(const ASTNode& f);
     std::unique_ptr<Expression> convertIdentifier(const ASTNode& identifier);
     std::unique_ptr<Statement> convertIf(const ASTNode& s);
-    std::unique_ptr<Expression> convertIndex(std::unique_ptr<Expression> base,
-                                             const ASTNode& index);
+    void scanInterfaceBlock(SkSL::InterfaceBlock& intf);
     std::unique_ptr<InterfaceBlock> convertInterfaceBlock(const ASTNode& s);
     Modifiers convertModifiers(const Modifiers& m);
     std::unique_ptr<Expression> convertPrefixExpression(const ASTNode& expression);
+    std::unique_ptr<Statement> convertReturn(int offset, std::unique_ptr<Expression> result);
     std::unique_ptr<Statement> convertReturn(const ASTNode& r);
-    std::unique_ptr<Section> convertSection(const ASTNode& e);
     std::unique_ptr<Expression> convertCallExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertFieldExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertIndexExpression(const ASTNode& expression);
     std::unique_ptr<Expression> convertPostfixExpression(const ASTNode& expression);
-    std::unique_ptr<Expression> convertScopeExpression(const ASTNode& expression);
-    std::unique_ptr<Expression> convertTypeField(int offset, const Type& type,
-                                                 StringFragment field);
-    std::unique_ptr<Expression> convertField(std::unique_ptr<Expression> base,
-                                             StringFragment field);
+    std::unique_ptr<StructDefinition> convertStructDefinition(const ASTNode& expression);
     std::unique_ptr<Expression> convertSwizzle(std::unique_ptr<Expression> base,
-                                               StringFragment fields);
+                                               skstd::string_view fields);
     std::unique_ptr<Expression> convertTernaryExpression(const ASTNode& expression);
     std::unique_ptr<Statement> convertVarDeclarationStatement(const ASTNode& s);
     std::unique_ptr<Statement> convertWhile(const ASTNode& w);
-    void convertEnum(const ASTNode& e);
-    std::unique_ptr<Block> applyInvocationIDWorkaround(std::unique_ptr<Block> main);
-    // returns a statement which converts sk_Position from device to normalized coordinates
-    std::unique_ptr<Statement> getNormalizeSkPositionCode();
+    void convertGlobalVarDeclarations(const ASTNode& decl);
+    /** Appends sk_Position fixup to the bottom of main() if this is a vertex program. */
+    void appendRTAdjustFixupToVertexMain(const FunctionDeclaration& decl, Block* body);
 
-    void checkValid(const Expression& expr);
     bool setRefKind(Expression& expr, VariableReference::RefKind kind);
-    bool getConstantInt(const Expression& value, int64_t* out);
     void copyIntrinsicIfNeeded(const FunctionDeclaration& function);
-    void cloneBuiltinVariables();
+    void findAndDeclareBuiltinVariables();
 
-    Inliner* fInliner = nullptr;
+    // Runtime effects (and the interpreter, which uses the same CPU runtime) require adherence to
+    // the strict rules from The OpenGL ES Shading Language Version 1.00. (Including Appendix A).
+    bool strictES2Mode() const {
+        return fContext.fConfig->strictES2Mode();
+    }
+
+    bool isRuntimeEffect() const {
+        return ProgramConfig::IsRuntimeEffect(fContext.fConfig->fKind);
+    }
+
+    const ShaderCapsClass& caps() const {
+        return fContext.fCaps;
+    }
+
+    ModifiersPool& modifiersPool() const {
+        return *fContext.fModifiersPool;
+    }
+
+    Program::Inputs fInputs;
+
     std::unique_ptr<ASTFile> fFile;
-    const FunctionDeclaration* fCurrentFunction;
-    std::unordered_map<String, Program::Settings::Value> fCapsMap;
-    std::shared_ptr<SymbolTable> fSymbolTable;
-    // additional statements that need to be inserted before the one that convertStatement is
-    // currently working on
-    std::vector<std::unique_ptr<Statement>> fExtraStatements;
+
+    std::shared_ptr<SymbolTable> fSymbolTable = nullptr;
     // Symbols which have definitions in the include files.
     IRIntrinsicMap* fIntrinsics = nullptr;
-    std::unordered_set<const FunctionDeclaration*> fReferencedIntrinsics;
-    int fLoopLevel;
-    int fSwitchLevel;
-    ErrorReporter& fErrors;
-    int fInvocations;
-    std::vector<std::unique_ptr<ProgramElement>>* fProgramElements;
-    const Variable* fSkPerVertex = nullptr;
-    const Variable* fRTAdjust;
-    const Variable* fRTAdjustInterfaceBlock;
+    std::unordered_set<const Type*> fDefinedStructs;
+    std::vector<std::unique_ptr<ProgramElement>>* fProgramElements = nullptr;
+    std::vector<const ProgramElement*>*           fSharedElements = nullptr;
+    const Variable* fRTAdjust = nullptr;
+    const Variable* fRTAdjustInterfaceBlock = nullptr;
     int fRTAdjustFieldIndex;
-    bool fCanInline = true;
     // true if we are currently processing one of the built-in SkSL include files
-    bool fIsBuiltinCode;
-    std::unique_ptr<ModifiersPool> fModifiers;
+    bool fIsBuiltinCode = false;
 
     friend class AutoSymbolTable;
     friend class AutoLoopLevel;
     friend class AutoSwitchLevel;
     friend class AutoDisableInline;
     friend class Compiler;
+    friend class DSLParser;
+    friend class dsl::DSLCore;
+    friend class dsl::DSLFunction;
+    friend class dsl::DSLVar;
+    friend class dsl::DSLWriter;
 };
 
 }  // namespace SkSL

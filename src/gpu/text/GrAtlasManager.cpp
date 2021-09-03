@@ -41,14 +41,14 @@ static void expand_bits(INT_TYPE* dst,
                         int height,
                         int dstRowBytes,
                         int srcRowBytes) {
-    for (int i = 0; i < height; ++i) {
+    for (int y = 0; y < height; ++y) {
         int rowWritesLeft = width;
         const uint8_t* s = src;
         INT_TYPE* d = dst;
         while (rowWritesLeft > 0) {
             unsigned mask = *s++;
-            for (int i = 7; i >= 0 && rowWritesLeft; --i, --rowWritesLeft) {
-                *d++ = (mask & (1 << i)) ? (INT_TYPE)(~0UL) : 0;
+            for (int x = 7; x >= 0 && rowWritesLeft; --x, --rowWritesLeft) {
+                *d++ = (mask & (1 << x)) ? (INT_TYPE)(~0UL) : 0;
             }
         }
         dst = reinterpret_cast<INT_TYPE*>(reinterpret_cast<intptr_t>(dst) + dstRowBytes);
@@ -207,10 +207,10 @@ void GrAtlasManager::addGlyphToBulkAndSetUseToken(GrDrawOpAtlas::BulkUseTokenUpd
 
 #ifdef SK_DEBUG
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
-#include "src/gpu/GrSurfaceContext.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrSurfaceProxy.h"
 #include "src/gpu/GrTextureProxy.h"
+#include "src/gpu/SurfaceContext.h"
 
 #include "include/core/SkBitmap.h"
 #include "include/core/SkImageEncoder.h"
@@ -234,13 +234,13 @@ static bool save_pixels(GrDirectContext* dContext, GrSurfaceProxyView view, GrCo
         return false;
     }
 
-    auto sContext = GrSurfaceContext::Make(dContext, std::move(view), colorType,
-                                           kUnknown_SkAlphaType, nullptr);
+    auto sContext = dContext->priv().makeSC(std::move(view),
+                                            {colorType, kUnknown_SkAlphaType, nullptr});
     if (!sContext || !sContext->asTextureProxy()) {
         return false;
     }
 
-    bool result = sContext->readPixels(dContext, ii, bm.getPixels(), bm.rowBytes(), {0, 0});
+    bool result = sContext->readPixels(dContext, bm.pixmap(), {0, 0});
     if (!result) {
         SkDebugf("------ failed to read pixels for %s\n", filename);
         return false;
@@ -305,10 +305,10 @@ bool GrAtlasManager::initAtlas(GrMaskFormat format) {
         SkISize atlasDimensions = fAtlasConfig.atlasDimensions(format);
         SkISize plotDimensions = fAtlasConfig.plotDimensions(format);
 
-        const GrBackendFormat format = fCaps->getDefaultBackendFormat(grColorType,
-                                                                      GrRenderable::kNo);
+        const GrBackendFormat backendFormat =
+                fCaps->getDefaultBackendFormat(grColorType, GrRenderable::kNo);
 
-        fAtlases[index] = GrDrawOpAtlas::Make(fProxyProvider, format, grColorType,
+        fAtlases[index] = GrDrawOpAtlas::Make(fProxyProvider, backendFormat, grColorType,
                                               atlasDimensions.width(), atlasDimensions.height(),
                                               plotDimensions.width(), plotDimensions.height(),
                                               this, fAllowMultitexturing, nullptr);

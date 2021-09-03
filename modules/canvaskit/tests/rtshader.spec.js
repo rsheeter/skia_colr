@@ -18,12 +18,12 @@ describe('Runtime shader effects', () => {
     // it will draw blank.
     const spiralSkSL = `
 uniform float rad_scale;
-uniform float2 in_center;
+uniform int2   in_center;
 uniform float4 in_colors0;
 uniform float4 in_colors1;
 
 half4 main(float2 p) {
-    float2 pp = p - in_center;
+    float2 pp = p - float2(in_center);
     float radius = sqrt(dot(pp, pp));
     radius = sqrt(radius);
     float angle = atan(pp.y / pp.x);
@@ -42,6 +42,23 @@ half4 main(float2 p) {
         }
         const spiral = CanvasKit.RuntimeEffect.Make(spiralSkSL);
         expect(spiral).toBeTruthy('could not compile program');
+
+        expect(spiral.getUniformCount()     ).toEqual(4);
+        expect(spiral.getUniformFloatCount()).toEqual(11);
+        const center = spiral.getUniform(1);
+        expect(center).toBeTruthy('could not fetch numbered uniform');
+        expect(center.slot     ).toEqual(1);
+        expect(center.columns  ).toEqual(2);
+        expect(center.rows     ).toEqual(1);
+        expect(center.isInteger).toEqual(true);
+        const color_0 = spiral.getUniform(2);
+        expect(color_0).toBeTruthy('could not fetch numbered uniform');
+        expect(color_0.slot     ).toEqual(3);
+        expect(color_0.columns  ).toEqual(4);
+        expect(color_0.rows     ).toEqual(1);
+        expect(color_0.isInteger).toEqual(false);
+        expect(spiral.getUniformName(2)).toEqual('in_colors0');
+
         const canvas = surface.getCanvas();
         const paint = new CanvasKit.Paint();
         canvas.clear(CanvasKit.BLACK); // black should not be visible
@@ -70,6 +87,15 @@ half4 main(float2 p) {
         testRTShader('rtshader_spiral_translated', done, CanvasKit.Matrix.translated(-200, 100));
     });
 
+    it('can provide a error handler for compilation errors', () => {
+        let error = '';
+        const spiral = CanvasKit.RuntimeEffect.Make(`invalid sksl code, I hope`, (e) => {
+            error = e;
+        });
+        expect(spiral).toBeFalsy();
+        expect(error).toContain('error');
+    });
+
     const loadBrick = fetch(
         '/assets/brickwork-texture.jpg')
         .then((response) => response.arrayBuffer());
@@ -78,9 +104,9 @@ half4 main(float2 p) {
         .then((response) => response.arrayBuffer());
 
     const thresholdSkSL = `
-in shader before_map;
-in shader after_map;
-in shader threshold_map;
+uniform shader before_map;
+uniform shader after_map;
+uniform shader threshold_map;
 
 uniform float cutoff;
 uniform float slope;
@@ -91,10 +117,10 @@ float smooth_cutoff(float x) {
 }
 
 half4 main(float2 xy) {
-    half4 before = sample(before_map, xy);
-    half4 after = sample(after_map, xy);
+    half4 before = shade(before_map, xy);
+    half4 after = shade(after_map, xy);
 
-    float m = smooth_cutoff(sample(threshold_map, xy).r);
+    float m = smooth_cutoff(shade(threshold_map, xy).r);
     return mix(before, after, half(m));
 }`;
 
@@ -113,12 +139,14 @@ half4 main(float2 xy) {
                 const spiralEffect = CanvasKit.RuntimeEffect.Make(spiralSkSL);
                 expect(spiralEffect).toBeTruthy('spiral did not compile');
 
-                const brickShader = brickImg.makeShader(
+                const brickShader = brickImg.makeShaderCubic(
                     CanvasKit.TileMode.Decal, CanvasKit.TileMode.Decal,
+                    1/3 /*B*/, 1/3 /*C*/,
                     CanvasKit.Matrix.scaled(CANVAS_WIDTH/brickImg.width(),
                                               CANVAS_HEIGHT/brickImg.height()));
-                const mandrillShader = mandrillImg.makeShader(
+                const mandrillShader = mandrillImg.makeShaderCubic(
                     CanvasKit.TileMode.Decal, CanvasKit.TileMode.Decal,
+                    1/3 /*B*/, 1/3 /*C*/,
                     CanvasKit.Matrix.scaled(CANVAS_WIDTH/mandrillImg.width(),
                                               CANVAS_HEIGHT/mandrillImg.height()));
                 const spiralShader = spiralEffect.makeShader([

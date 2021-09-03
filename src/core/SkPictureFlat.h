@@ -55,7 +55,7 @@ enum DrawType {
     RESTORE,
     ROTATE,
     SAVE,
-    SAVE_LAYER_SAVEFLAGS_DEPRECATED,
+    SAVE_LAYER_SAVEFLAGS_DEPRECATED_2015_REMOVED_12_2020,
     SCALE,
     SET_MATRIX,
     SKEW,
@@ -107,8 +107,16 @@ enum DrawType {
     CONCAT44,
     CLIP_SHADER_IN_PAINT,
     MARK_CTM,
+    SET_M44,
 
-    LAST_DRAWTYPE_ENUM = MARK_CTM,
+    DRAW_IMAGE2,
+    DRAW_IMAGE_RECT2,
+    DRAW_IMAGE_LATTICE2,
+    DRAW_EDGEAA_IMAGE_SET2,
+
+    RESET_CLIP,
+
+    LAST_DRAWTYPE_ENUM = RESET_CLIP,
 };
 
 enum DrawVertexFlags {
@@ -119,8 +127,9 @@ enum DrawVertexFlags {
 };
 
 enum DrawAtlasFlags {
-    DRAW_ATLAS_HAS_COLORS   = 1 << 0,
-    DRAW_ATLAS_HAS_CULL     = 1 << 1,
+    DRAW_ATLAS_HAS_COLORS     = 1 << 0,
+    DRAW_ATLAS_HAS_CULL       = 1 << 1,
+    DRAW_ATLAS_HAS_SAMPLING   = 1 << 2,
 };
 
 enum DrawTextRSXformFlags {
@@ -144,22 +153,22 @@ enum SaveBehindFlatFlags {
 // clipparams are packed in 5 bits
 //  doAA:1 | clipOp:4
 
+// Newly serialized pictures will only write kIntersect or kDifference.
 static inline uint32_t ClipParams_pack(SkClipOp op, bool doAA) {
     unsigned doAABit = doAA ? 1 : 0;
     return (doAABit << 4) | static_cast<int>(op);
 }
 
-template <typename T> T asValidEnum(SkReadBuffer* buffer, uint32_t candidate) {
-
-    if (buffer->validate(candidate <= static_cast<uint32_t>(T::kMax_EnumValue))) {
-        return static_cast<T>(candidate);
+// But old SKPs may have been serialized with the SK_SUPPORT_DEPRECATED_CLIPOP flag, so might
+// encounter expanding clip ops. Thus, this returns the clip op as the more general Region::Op.
+static inline SkRegion::Op ClipParams_unpackRegionOp(SkReadBuffer* buffer, uint32_t packed) {
+    uint32_t unpacked = packed & 0xF;
+    if (buffer->validate(unpacked <= SkRegion::kIntersect_Op ||
+                         (unpacked <= SkRegion::kReplace_Op &&
+                                buffer->isVersionLT(SkPicturePriv::kNoExpandingClipOps)))) {
+        return static_cast<SkRegion::Op>(unpacked);
     }
-
-    return T::kMax_EnumValue;
-}
-
-static inline SkClipOp ClipParams_unpackRegionOp(SkReadBuffer* buffer, uint32_t packed) {
-    return asValidEnum<SkClipOp>(buffer, packed & 0xF);
+    return SkRegion::kIntersect_Op;
 }
 
 static inline bool ClipParams_unpackDoAA(uint32_t packed) {

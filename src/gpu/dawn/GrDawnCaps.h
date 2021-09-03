@@ -27,7 +27,7 @@ public:
 
     bool isFormatCopyable(const GrBackendFormat& format) const override { return true; }
 
-    bool isFormatTexturable(const GrBackendFormat& format) const override;
+    bool isFormatTexturable(const GrBackendFormat& format, GrTextureType) const override;
 
     SupportedWrite supportedWritePixelsColorType(GrColorType surfaceColorType,
                                                  const GrBackendFormat& surfaceFormat,
@@ -48,7 +48,9 @@ public:
 
     uint64_t computeFormatKey(const GrBackendFormat&) const override;
 
-    GrProgramDesc makeDesc(GrRenderTarget*, const GrProgramInfo&) const override;
+    GrProgramDesc makeDesc(GrRenderTarget*,
+                           const GrProgramInfo&,
+                           ProgramDescOverrideFlags) const override;
 
 #if GR_TEST_UTILS
     std::vector<TestFormatColorTypeCombination> getTestingCombinations() const override;

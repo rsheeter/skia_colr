@@ -8,6 +8,7 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkPathBuilder.h"
 #include "include/core/SkRRect.h"
+#include "include/private/SkTPin.h"
 #include "include/utils/SkRandom.h"
 #include "samplecode/Sample.h"
 #include "tools/timer/TimeUtils.h"
@@ -143,9 +144,8 @@ protected:
 
         // Handle everything in a normalized 1x1 space.
         fContentMatrix = sksg::Matrix<SkMatrix>::Make(
-            SkMatrix::MakeRectToRect(SkRect::MakeWH(1, 1),
-                                     SkRect::MakeIWH(this->width(), this->height()),
-                                     SkMatrix::kFill_ScaleToFit));
+            SkMatrix::RectToRect(SkRect::MakeWH(1, 1),
+                                 SkRect::MakeIWH(this->width(), this->height())));
         auto root = sksg::TransformEffect::Make(std::move(group), fContentMatrix);
         fScene = sksg::Scene::Make(std::move(root));
 
@@ -174,10 +174,9 @@ protected:
 
     void onSizeChange() override {
         if (fContentMatrix) {
-            fContentMatrix->setMatrix(SkMatrix::MakeRectToRect(SkRect::MakeWH(1, 1),
-                                                               SkRect::MakeIWH(this->width(),
-                                                                               this->height()),
-                                                               SkMatrix::kFill_ScaleToFit));
+            fContentMatrix->setMatrix(SkMatrix::RectToRect(SkRect::MakeWH(1, 1),
+                                                           SkRect::MakeIWH(this->width(),
+                                                                           this->height())));
         }
 
         this->INHERITED::onSizeChange();

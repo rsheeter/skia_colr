@@ -8,7 +8,7 @@
 #include "src/gpu/GrStagingBufferManager.h"
 
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/GrGpu.h"
 #include "src/gpu/GrResourceProvider.h"
 
@@ -19,7 +19,7 @@ GrStagingBufferManager::Slice GrStagingBufferManager::allocateStagingBufferSlice
     for (size_t i = 0; i < fBuffers.size(); ++i) {
         size_t totalBufferSize = fBuffers[i].fBuffer->size();
         size_t currentOffset = fBuffers[i].fOffset;
-        offset = GrAlignTo(currentOffset, requiredAlignment);
+        offset = ((currentOffset + requiredAlignment - 1)/requiredAlignment)*requiredAlignment;
         if (totalBufferSize - offset >= size) {
             buffer = &fBuffers[i];
             break;

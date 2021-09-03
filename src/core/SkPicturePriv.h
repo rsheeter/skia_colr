@@ -35,6 +35,15 @@ public:
         return picture->asSkBigPicture();
     }
 
+    static uint64_t MakeSharedID(uint32_t pictureID) {
+        uint64_t sharedID = SkSetFourByteTag('p', 'i', 'c', 't');
+        return (sharedID << 32) | pictureID;
+    }
+
+    static void AddedToCache(const SkPicture* pic) {
+        pic->fAddedToCache.store(true);
+    }
+
     // V35: Store SkRect (rather then width & height) in header
     // V36: Remove (obsolete) alphatype from SkColorTable
     // V37: Added shadow only option to SkDropShadowImageFilter (last version to record CLEAR)
@@ -80,22 +89,31 @@ public:
     // V77: Explicit filtering options on imageshaders
     // V78: Serialize skmipmap data for images that have it
     // V79: Cubic Resampler option on imageshader
+    // V80: Smapling options on imageshader
+    // V81: sampling parameters on drawImage/drawImageRect/etc.
+    // V82: Add filter param to picture-shader
+    // V83: SkMatrixImageFilter now takes SkSamplingOptions instead of SkFilterQuality
+    // V84: SkImageFilters::Image now takes SkSamplingOptions instead of SkFilterQuality
+    // V85: Remove legacy support for inheriting sampling from the paint.
+    // V86: Remove support for custom data inside SkVertices
+    // V87: SkPaint now holds a user-defined blend function (SkBlender), no longer has DrawLooper
+    // V88: Add blender to ComposeShader and BlendImageFilter
+    // V89: Deprecated SkClipOps are no longer supported
 
     enum Version {
-        kMorphologyTakesScalar_Version      = 74,
-        kVerticesUseReadBuffer_Version      = 75,
-        kFilterEnumInImageShader_Version    = 76,
-        kFilterOptionsInImageShader_Version = 77,
-        kSerializeMipmaps_Version           = 78,
-        kCubicResamplerImageShader_Version  = 79,
+        kPictureShaderFilterParam_Version   = 82,
+        kMatrixImageFilterSampling_Version  = 83,
+        kImageFilterImageSampling_Version   = 84,
+        kNoFilterQualityShaders_Version     = 85,
+        kVerticesRemoveCustomData_Version   = 86,
+        kSkBlenderInSkPaint                 = 87,
+        kBlenderInEffects                   = 88,
+        kNoExpandingClipOps                 = 89,
 
         // Only SKPs within the min/current picture version range (inclusive) can be read.
-        kMin_Version     = kMorphologyTakesScalar_Version,
-        kCurrent_Version = kCubicResamplerImageShader_Version
+        kMin_Version     = kPictureShaderFilterParam_Version,
+        kCurrent_Version = kNoExpandingClipOps
     };
-
-    static_assert(SkPicturePriv::kMin_Version <= SkPicturePriv::kCubicResamplerImageShader_Version,
-        "Remove SkFontDescriptor::maybeAsSkFontData, SkFontMgr::makeFromFontData, kFontAxes");
 };
 
 #endif

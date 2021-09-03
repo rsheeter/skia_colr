@@ -37,14 +37,82 @@ static void testChopCubic(skiatest::Reporter* reporter) {
         REPORTER_ASSERT(reporter, count);
     }
     // Make sure src and dst can be the same pointer.
-    SkPoint pts[7];
-    for (int i = 0; i < 7; ++i) {
-        pts[i].set(i, i);
+    {
+        SkPoint pts[7];
+        for (int i = 0; i < 7; ++i) {
+            pts[i].set(i, i);
+        }
+        SkChopCubicAt(pts, pts, .5f);
+        for (int i = 0; i < 7; ++i) {
+            REPORTER_ASSERT(reporter, pts[i].fX == pts[i].fY);
+            REPORTER_ASSERT(reporter, pts[i].fX == i * .5f);
+        }
     }
-    SkChopCubicAt(pts, pts, .5f);
-    for (int i = 0; i < 7; ++i) {
-        REPORTER_ASSERT(reporter, pts[i].fX == pts[i].fY);
-        REPORTER_ASSERT(reporter, pts[i].fX == i * .5f);
+
+    static const float chopTs[] = {
+        0, 3/83.f, 3/79.f, 3/73.f, 3/71.f, 3/67.f, 3/61.f, 3/59.f, 3/53.f, 3/47.f, 3/43.f, 3/41.f,
+        3/37.f, 3/31.f, 3/29.f, 3/23.f, 3/19.f, 3/17.f, 3/13.f, 3/11.f, 3/7.f, 3/5.f, 1,
+    };
+    float ones[] = {1,1,1,1,1};
+
+    // Ensure an odd number of T values so we exercise the single chop code at the end of
+    // SkChopCubicAt form multiple T.
+    static_assert(SK_ARRAY_COUNT(chopTs) % 2 == 1);
+    static_assert(SK_ARRAY_COUNT(ones) % 2 == 1);
+
+    SkRandom rand;
+    for (int iterIdx = 0; iterIdx < 5; ++iterIdx) {
+        SkPoint pts[4] = {{rand.nextF(), rand.nextF()}, {rand.nextF(), rand.nextF()},
+                          {rand.nextF(), rand.nextF()}, {rand.nextF(), rand.nextF()}};
+
+        SkPoint allChops[4 + SK_ARRAY_COUNT(chopTs)*3];
+        SkChopCubicAt(pts, allChops, chopTs, SK_ARRAY_COUNT(chopTs));
+        int i = 3;
+        for (float chopT : chopTs) {
+            // Ensure we chop at approximately the correct points when we chop an entire list.
+            SkPoint expectedPt;
+            SkEvalCubicAt(pts, chopT, &expectedPt, nullptr, nullptr);
+            REPORTER_ASSERT(reporter, SkScalarNearlyEqual(allChops[i].x(), expectedPt.x()));
+            REPORTER_ASSERT(reporter, SkScalarNearlyEqual(allChops[i].y(), expectedPt.y()));
+            if (chopT == 0) {
+                REPORTER_ASSERT(reporter, allChops[i] == pts[0]);
+            }
+            if (chopT == 1) {
+                REPORTER_ASSERT(reporter, allChops[i] == pts[3]);
+            }
+            i += 3;
+
+            // Ensure the middle is exactly degenerate when we chop at two equal points.
+            SkPoint localChops[10];
+            SkChopCubicAt(pts, localChops, chopT, chopT);
+            REPORTER_ASSERT(reporter, localChops[3] == localChops[4]);
+            REPORTER_ASSERT(reporter, localChops[3] == localChops[5]);
+            REPORTER_ASSERT(reporter, localChops[3] == localChops[6]);
+            if (chopT == 0) {
+                // Also ensure the first curve is exactly p0 when we chop at T=0.
+                REPORTER_ASSERT(reporter, localChops[0] == pts[0]);
+                REPORTER_ASSERT(reporter, localChops[1] == pts[0]);
+                REPORTER_ASSERT(reporter, localChops[2] == pts[0]);
+                REPORTER_ASSERT(reporter, localChops[3] == pts[0]);
+            }
+            if (chopT == 1) {
+                // Also ensure the last curve is exactly p3 when we chop at T=1.
+                REPORTER_ASSERT(reporter, localChops[6] == pts[3]);
+                REPORTER_ASSERT(reporter, localChops[7] == pts[3]);
+                REPORTER_ASSERT(reporter, localChops[8] == pts[3]);
+                REPORTER_ASSERT(reporter, localChops[9] == pts[3]);
+            }
+        }
+
+        // Now test what happens when SkChopCubicAt does 0/0 and gets NaN values.
+        SkPoint oneChops[4 + SK_ARRAY_COUNT(ones)*3];
+        SkChopCubicAt(pts, oneChops, ones, SK_ARRAY_COUNT(ones));
+        REPORTER_ASSERT(reporter, oneChops[0] == pts[0]);
+        REPORTER_ASSERT(reporter, oneChops[1] == pts[1]);
+        REPORTER_ASSERT(reporter, oneChops[2] == pts[2]);
+        for (size_t index = 3; index < SK_ARRAY_COUNT(oneChops); ++index) {
+            REPORTER_ASSERT(reporter, oneChops[index] == pts[3]);
+        }
     }
 }
 
@@ -554,6 +622,13 @@ DEF_TEST(Geometry, reporter) {
 
     int count = SkChopQuadAtMaxCurvature(pts, pts);  // Ensure src and dst can be the same pointer.
     REPORTER_ASSERT(reporter, count == 1 || count == 2);
+
+    // This previously crashed because the computed t of max curvature is NaN and SkChopQuadAt
+    // asserts that the passed t is in 0..1. Passes by not asserting.
+    pts[0].set(15.1213f, 7.77647f);
+    pts[1].set(6.2168e+19f, 1.51338e+20f);
+    pts[2].set(1.4579e+19f, 1.55558e+21f);
+    count = SkChopQuadAtMaxCurvature(pts, pts);
 
     pts[0].set(0, 0);
     pts[1].set(3, 0);

@@ -22,6 +22,7 @@ import (
 	"go.skia.org/infra/go/exec"
 	"go.skia.org/infra/go/skerr"
 	"go.skia.org/infra/go/sklog"
+	"go.skia.org/infra/go/util"
 	"go.skia.org/infra/task_driver/go/lib/os_steps"
 	"go.skia.org/infra/task_driver/go/td"
 )
@@ -72,11 +73,11 @@ func main() {
 		td.Fatal(ctx, skerr.Wrap(err))
 	}
 	// Absolute paths work more consistently than relative paths.
-	nodeBinAbsPath := getAbsoluteOfRequiredFlag(ctx, *nodeBinPath, "node_bin_path")
-	benchmarkAbsPath := getAbsoluteOfRequiredFlag(ctx, *benchmarkPath, "benchmark_path")
-	canvaskitBinAbsPath := getAbsoluteOfRequiredFlag(ctx, *canvaskitBinPath, "canvaskit_bin_path")
-	lottiesAbsPath := getAbsoluteOfRequiredFlag(ctx, *lottiesPath, "lotties_path")
-	outputAbsPath := getAbsoluteOfRequiredFlag(ctx, *outputPath, "output_path")
+	nodeBinAbsPath := td.MustGetAbsolutePathOfFlag(ctx, *nodeBinPath, "node_bin_path")
+	benchmarkAbsPath := td.MustGetAbsolutePathOfFlag(ctx, *benchmarkPath, "benchmark_path")
+	canvaskitBinAbsPath := td.MustGetAbsolutePathOfFlag(ctx, *canvaskitBinPath, "canvaskit_bin_path")
+	lottiesAbsPath := td.MustGetAbsolutePathOfFlag(ctx, *lottiesPath, "lotties_path")
+	outputAbsPath := td.MustGetAbsolutePathOfFlag(ctx, *outputPath, "output_path")
 
 	if err := setup(ctx, benchmarkAbsPath, nodeBinAbsPath); err != nil {
 		td.Fatal(ctx, skerr.Wrap(err))
@@ -92,17 +93,6 @@ func main() {
 	if err := processSkottieFramesData(ctx, outputWithoutResults, benchmarkAbsPath, outputFile); err != nil {
 		td.Fatal(ctx, skerr.Wrap(err))
 	}
-}
-
-func getAbsoluteOfRequiredFlag(ctx context.Context, nonEmptyPath, flag string) string {
-	if nonEmptyPath == "" {
-		td.Fatalf(ctx, "--%s must be specified", flag)
-	}
-	absPath, err := filepath.Abs(nonEmptyPath)
-	if err != nil {
-		td.Fatal(ctx, skerr.Wrap(err))
-	}
-	return absPath
 }
 
 const perfKeyCpuOrGPU = "cpu_or_gpu"
@@ -142,6 +132,19 @@ func setup(ctx context.Context, benchmarkPath, nodeBinPath string) error {
 	return nil
 }
 
+var cpuSkiplist = []string{
+	"Curly_Hair",                       // Times out after drawing ~200 frames.
+	"Day_Night",                        // Times out after drawing ~400 frames.
+	"an_endless_hike_on_a_tiny_world_", // Times out after drawing ~200 frames.
+	"beetle",                           // Times out after drawing ~500 frames.
+	"day_night_cycle",                  // Times out after drawing ~400 frames.
+	"fidget_spinner",                   // Times out after drawing ~400 frames.
+	"intelia_logo_animation",           // Times out after drawing ~300 frames.
+	"siren",                            // Times out after drawing ~500 frames.
+	"truecosmos",                       // Times out after drawing ~200 frames.
+}
+var gpuSkiplist = []string{}
+
 // benchSkottieFrames serves lotties and assets from a folder and runs the skottie-frames-load
 // benchmark on each of them individually. The output for each will be a JSON file in
 // $benchmarkPath/out/ corresponding to the animation name.
@@ -174,11 +177,20 @@ func benchSkottieFrames(ctx context.Context, perf perfJSONFormat, benchmarkPath,
 	if err != nil {
 		return td.FailStep(ctx, skerr.Wrap(err))
 	}
+	skiplist := cpuSkiplist
+	if perf.Key[perfKeyCpuOrGPU] != "CPU" {
+		skiplist = gpuSkiplist
+	}
 
 	sklog.Infof("Identified %d lottie folders to benchmark", len(lottieFolders))
 
+	var lastErr error
 	for _, lottie := range lottieFolders {
 		name := filepath.Base(lottie)
+		if util.In(name, skiplist) {
+			sklog.Infof("Skipping lottie %s", name)
+			continue
+		}
 		err = td.Do(ctx, td.Props("Benchmark "+name), func(ctx context.Context) error {
 			// See comment in setup about why we specify the absolute path for node.
 			args := []string{filepath.Join(nodeBinPath, "node"),
@@ -204,10 +216,11 @@ func benchSkottieFrames(ctx context.Context, perf perfJSONFormat, benchmarkPath,
 			return nil
 		})
 		if err != nil {
-			return td.FailStep(ctx, skerr.Wrap(err))
+			lastErr = td.FailStep(ctx, skerr.Wrap(err))
+			// Don't return - we want to try to test all the inputs.
 		}
 	}
-	return nil
+	return lastErr // will be nil if no lottie failed.
 }
 
 type perfJSONFormat struct {

@@ -88,9 +88,9 @@ void SkContourMeasure_segTo(const SkPoint pts[], unsigned segType,
                 }
             } else {
                 if (SK_Scalar1 == stopT) {
-                    SkConic tmp1[2];
-                    if (conic.chopAt(startT, tmp1)) {
-                        dst->conicTo(tmp1[1].fPts[1], tmp1[1].fPts[2], tmp1[1].fW);
+                    SkConic tmp[2];
+                    if (conic.chopAt(startT, tmp)) {
+                        dst->conicTo(tmp[1].fPts[1], tmp[1].fPts[2], tmp[1].fW);
                     }
                 } else {
                     SkConic tmp;
@@ -175,17 +175,17 @@ static bool cubic_too_curvy(const SkPoint pts[4], SkScalar tolerance) {
 class SkContourMeasureIter::Impl {
 public:
     Impl(const SkPath& path, bool forceClosed, SkScalar resScale)
-            : fIter(SkPathPriv::Iterate(path).begin())
-            , fPath(path)
-            , fTolerance(CHEAP_DIST_LIMIT * SkScalarInvert(resScale))
-            , fForceClosed(forceClosed) {}
+        : fPath(path)
+        , fIter(SkPathPriv::Iterate(fPath).begin())
+        , fTolerance(CHEAP_DIST_LIMIT * SkScalarInvert(resScale))
+        , fForceClosed(forceClosed) {}
 
     bool hasNextSegments() const { return fIter != SkPathPriv::Iterate(fPath).end(); }
     SkContourMeasure* buildSegments();
 
 private:
-    SkPathPriv::RangeIter fIter;
     SkPath                fPath;
+    SkPathPriv::RangeIter fIter;
     SkScalar              fTolerance;
     bool                  fForceClosed;
 

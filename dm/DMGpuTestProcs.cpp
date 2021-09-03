@@ -33,10 +33,6 @@ bool IsDawnContextType(sk_gpu_test::GrContextFactory::ContextType type) {
 bool IsRenderingGLContextType(sk_gpu_test::GrContextFactory::ContextType type) {
     return IsGLContextType(type) && GrContextFactory::IsRenderingContext(type);
 }
-bool IsRenderingGLOrMetalContextType(sk_gpu_test::GrContextFactory::ContextType type) {
-    return (IsGLContextType(type) || IsMetalContextType(type)) &&
-           GrContextFactory::IsRenderingContext(type);
-}
 bool IsMockContextType(sk_gpu_test::GrContextFactory::ContextType type) {
     return type == GrContextFactory::kMock_ContextType;
 }
@@ -75,7 +71,8 @@ void RunWithGPUTestContexts(GrContextTestFn* test, GrContextTypeFilterFn* contex
             // In case the test changed the current context make sure we move it back before
             // calling flush.
             ctxInfo.testContext()->makeCurrent();
-            ctxInfo.directContext()->flushAndSubmit();
+            // Sync so any release/finished procs get called.
+            ctxInfo.directContext()->flushAndSubmit(/*sync*/true);
         }
     }
 }

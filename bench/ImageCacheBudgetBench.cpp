@@ -10,7 +10,8 @@
 #include "include/core/SkImage.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
+#include "src/gpu/GrResourceCache.h"
 #include "tools/ToolUtils.h"
 
 
@@ -27,9 +28,7 @@ static constexpr int kS = 25;
 
 static void make_images(sk_sp<SkImage> imgs[], int cnt) {
     for (int i = 0; i < cnt; ++i) {
-        SkBitmap bmp =
-                ToolUtils::create_checkerboard_bitmap(kS, kS, SK_ColorBLACK, SK_ColorCYAN, 10);
-        imgs[i] = SkImage::MakeFromBitmap(bmp);
+        imgs[i] = ToolUtils::create_checkerboard_image(kS, kS, SK_ColorBLACK, SK_ColorCYAN, 10);
     }
 }
 
@@ -38,7 +37,7 @@ static void draw_image(SkCanvas* canvas, SkImage* img) {
     // optmizations
     SkPaint paint;
     paint.setAlpha(0x10);
-    canvas->drawImage(img, 0, 0, &paint);
+    canvas->drawImage(img, 0, 0, SkSamplingOptions(), &paint);
 }
 
 void set_cache_budget(SkCanvas* canvas, int approxImagesInBudget) {
@@ -47,7 +46,7 @@ void set_cache_budget(SkCanvas* canvas, int approxImagesInBudget) {
     auto context =  canvas->recordingContext()->asDirectContext();
     SkASSERT(context);
     context->flushAndSubmit();
-    context->priv().testingOnly_purgeAllUnlockedResources();
+    context->priv().getResourceCache()->purgeUnlockedResources();
     sk_sp<SkImage> image;
     make_images(&image, 1);
     draw_image(canvas, image.get());
@@ -56,7 +55,7 @@ void set_cache_budget(SkCanvas* canvas, int approxImagesInBudget) {
     context->getResourceCacheUsage(&baselineCount, nullptr);
     baselineCount -= 1; // for the image's textures.
     context->setResourceCacheLimits(baselineCount + approxImagesInBudget, 1 << 30);
-    context->priv().testingOnly_purgeAllUnlockedResources();
+    context->priv().getResourceCache()->purgeUnlockedResources();
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -122,6 +121,8 @@ protected:
     }
 
     void onDraw(int loops, SkCanvas* canvas) override {
+        auto dContext = GrAsDirectContext(canvas->recordingContext());
+
         for (int i = 0; i < loops; ++i) {
             for (int frame = 0; frame < kSimulatedFrames; ++frame) {
                 for (int j = 0; j < kImagesToDraw; ++j) {
@@ -134,7 +135,9 @@ protected:
                     draw_image(canvas, fImages[idx].get());
                 }
                 // Simulate a frame boundary by flushing. This should notify GrResourceCache.
-                canvas->flush();
+                if (dContext) {
+                    dContext->flush();
+                }
            }
         }
     }
@@ -217,6 +220,8 @@ protected:
     }
 
     void onDraw(int loops, SkCanvas* canvas) override {
+        auto dContext = GrAsDirectContext(canvas->recordingContext());
+
         int delta = 0;
         switch (fMode) {
             case Mode::kPingPong:
@@ -238,7 +243,9 @@ protected:
                     imgsToDraw += 2 * delta;
                 }
                 // Simulate a frame boundary by flushing. This should notify GrResourceCache.
-                canvas->flush();
+                if (dContext) {
+                    dContext->flush();
+                }
             }
         }
     }

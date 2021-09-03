@@ -11,7 +11,7 @@
 #include "include/core/SkColorPriv.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkGraphics.h"
-#include "include/core/SkPath.h"
+#include "include/core/SkPathBuilder.h"
 #include "include/core/SkRegion.h"
 #include "include/core/SkShader.h"
 #include "include/core/SkTime.h"
@@ -562,6 +562,7 @@ public:
     SkScalar fT = 0.5f;
     bool fShowSub = false;
     bool fShowFlatness = false;
+    bool fShowInnerQuads = false;
     SkScalar fScale = 0.75;
 
     CubicCurve2() {
@@ -584,10 +585,18 @@ protected:
                 case 'f': fShowFlatness = !fShowFlatness; break;
                 case '-': fT -= 1.0f / 32; break;
                 case '=': fT += 1.0f / 32; break;
+                case 'q': fShowInnerQuads = !fShowInnerQuads; break;
                 default: return false;
             }
             fT = std::min(1.0f, std::max(0.0f, fT));
             return true;
+    }
+
+    static void Dot(SkCanvas* canvas, SkPoint p, SkScalar radius, SkColor c) {
+        SkPaint paint;
+        paint.setAntiAlias(true);
+        paint.setColor(c);
+        canvas->drawCircle(p.fX, p.fY, radius, paint);
     }
 
     void showFrame(SkCanvas* canvas, const SkPoint pts[], int count, const SkPaint& p) {
@@ -595,7 +604,6 @@ protected:
         SkPoint storage[3 + 2 + 1];
         SkPoint* tmp = storage;
         const SkPoint* prev = pts;
-        int n = count;
         for (int n = count; n > 0; --n) {
             for (int i = 0; i < n; ++i) {
                 canvas->drawLine(prev[i], prev[i+1], paint);
@@ -607,9 +615,9 @@ protected:
 
         paint.setColor(SK_ColorBLUE);
         paint.setStyle(SkPaint::kFill_Style);
-        n = tmp - storage;
+        int n = tmp - storage;
         for (int i = 0; i < n; ++i) {
-            canvas->drawCircle(storage[i].fX, storage[i].fY, 4, paint);
+            Dot(canvas, storage[i], 4, SK_ColorBLUE);
         }
     }
 
@@ -653,6 +661,33 @@ protected:
         // not sure we can get here
     }
 
+    void showInnerQuads(SkCanvas* canvas) {
+        auto draw_quad = [canvas](SkPoint a, SkPoint b, SkPoint c, SkColor color) {
+            SkPaint paint;
+            paint.setAntiAlias(true);
+            paint.setStroke(true);
+            paint.setColor(color);
+
+            canvas->drawPath(SkPathBuilder().moveTo(a).quadTo(b, c).detach(), paint);
+        };
+
+        SkPoint p0 = SkEvalQuadAt(&fPts[0], fT),
+                p1 = SkEvalQuadAt(&fPts[1], fT),
+                p2 = lerp(p0, p1, fT);
+
+        draw_quad(fPts[0], fPts[1], fPts[2], SK_ColorRED);
+        Dot(canvas, p0, 4, SK_ColorRED);
+
+        draw_quad(fPts[1], fPts[2], fPts[3], SK_ColorBLUE);
+        Dot(canvas, p1, 4, SK_ColorBLUE);
+
+        SkPaint paint;
+        paint.setAntiAlias(true);
+        paint.setColor(0xFF008800);
+        canvas->drawLine(p0, p1, paint);
+        Dot(canvas, p2, 4, 0xFF00AA00);
+    }
+
     void onDrawContent(SkCanvas* canvas) override {
         SkPaint paint;
         paint.setAntiAlias(true);
@@ -683,13 +718,20 @@ protected:
             this->showFlattness(canvas);
         }
 
-        paint.setStyle(SkPaint::kFill_Style);
-        paint.setColor(SK_ColorRED);
-        for (SkPoint p : fPts) {
-            canvas->drawCircle(p.fX, p.fY, 7, paint);
+        if (fShowInnerQuads) {
+            this->showInnerQuads(canvas);
         }
 
-        {
+        paint.setColor(SK_ColorGRAY);
+        paint.setStroke(true);
+        canvas->drawPath(SkPathBuilder().addPolygon(fPts, 4, false).detach(), paint);
+        canvas->drawPath(SkPathBuilder().addPolygon(fQuad, 3, false).detach(), paint);
+
+        for (SkPoint p : fPts) {
+            Dot(canvas, p, 7, SK_ColorBLACK);
+        }
+
+        if (false) {
             SkScalar ts[2];
             int n = SkFindCubicInflections(fPts, ts);
             for (int i = 0; i < n; ++i) {

@@ -206,27 +206,26 @@ class CubicResamplerDemo : public Sample {
         sk_sp<SkImage>  fImage;
         SkRect          fBounds;
 
-        void draw(SkCanvas* canvas, SkImage::CubicResampler cubic) const {
+        void draw(SkCanvas* canvas, SkCubicResampler cubic) const {
             SkRect r = fBounds;
             SkPaint paint;
 
             SkMatrix lm = SkMatrix::Translate(r.x(), r.y())
                         * SkMatrix::Scale(10, 10);
-            paint.setShader(fImage->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, &lm));
+            paint.setShader(fImage->makeShader(SkSamplingOptions(), lm));
+            canvas->drawRect(r, paint);
+
+            r.offset(r.width() + 10, 0);
+            lm.postTranslate(r.width() + 10, 0);
+
+            paint.setShader(fImage->makeShader(SkSamplingOptions(SkFilterMode::kLinear), lm));
             canvas->drawRect(r, paint);
 
             r.offset(r.width() + 10, 0);
             lm.postTranslate(r.width() + 10, 0);
 
             paint.setShader(fImage->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
-                                               {SkSamplingMode::kLinear, SkMipmapMode::kNone},
-                                               &lm));
-            canvas->drawRect(r, paint);
-
-            r.offset(r.width() + 10, 0);
-            lm.postTranslate(r.width() + 10, 0);
-
-            paint.setShader(fImage->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, cubic, &lm));
+                                               SkSamplingOptions(cubic), &lm));
             canvas->drawRect(r, paint);
         }
     };
@@ -264,8 +263,7 @@ protected:
 
         paint.setColor(SK_ColorRED);
         paint.setStroke(false);
-        SkPoint loc = SkMatrix::MakeRectToRect({0,0,1,1}, fDomain, SkMatrix::kFill_ScaleToFit)
-                      .mapXY(fCubic.B, fCubic.C);
+        SkPoint loc = SkMatrix::RectToRect({0,0,1,1}, fDomain).mapXY(fCubic.B, fCubic.C);
         canvas->drawCircle(loc.fX, loc.fY, 8, paint);
 
         SkString str;

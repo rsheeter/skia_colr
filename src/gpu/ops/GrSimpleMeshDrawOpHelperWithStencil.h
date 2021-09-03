@@ -17,7 +17,6 @@
  */
 class GrSimpleMeshDrawOpHelperWithStencil : private GrSimpleMeshDrawOpHelper {
 public:
-    using MakeArgs = GrSimpleMeshDrawOpHelper::MakeArgs;
     using InputFlags = GrSimpleMeshDrawOpHelper::InputFlags;
 
     using GrSimpleMeshDrawOpHelper::visitProxies;
@@ -25,39 +24,39 @@ public:
 
     GrProgramInfo* createProgramInfoWithStencil(const GrCaps*,
                                                 SkArenaAlloc*,
-                                                const GrSurfaceProxyView* writeViewSwizzle,
+                                                const GrSurfaceProxyView& writeView,
+                                                bool usesMSAASurface,
                                                 GrAppliedClip&&,
-                                                const GrXferProcessor::DstProxyView&,
+                                                const GrDstProxyView&,
                                                 GrGeometryProcessor*,
                                                 GrPrimitiveType,
-                                                GrXferBarrierFlags renderPassXferBarriers);
+                                                GrXferBarrierFlags renderPassXferBarriers,
+                                                GrLoadOp colorLoadOp);
 
     // using declarations can't be templated, so this is a pass through function instead.
     template <typename Op, typename... OpArgs>
-    static std::unique_ptr<GrDrawOp> FactoryHelper(GrRecordingContext* context, GrPaint&& paint,
-                                                   OpArgs... opArgs) {
+    static GrOp::Owner FactoryHelper(GrRecordingContext* context, GrPaint&& paint,
+                                     OpArgs... opArgs) {
         return GrSimpleMeshDrawOpHelper::FactoryHelper<Op, OpArgs...>(
                 context, std::move(paint), std::forward<OpArgs>(opArgs)...);
     }
 
-    GrSimpleMeshDrawOpHelperWithStencil(const MakeArgs&, GrAAType, const GrUserStencilSettings*,
+    GrSimpleMeshDrawOpHelperWithStencil(GrProcessorSet*, GrAAType, const GrUserStencilSettings*,
                                         InputFlags = InputFlags::kNone);
 
     GrDrawOp::FixedFunctionFlags fixedFunctionFlags() const;
 
-    GrProcessorSet::Analysis finalizeProcessors(
-            const GrCaps& caps, const GrAppliedClip* clip, bool hasMixedSampledCoverage,
-            GrClampType clampType, GrProcessorAnalysisCoverage geometryCoverage,
-            GrProcessorAnalysisColor* geometryColor) {
-        return this->INHERITED::finalizeProcessors(
-                caps, clip, fStencilSettings, hasMixedSampledCoverage, clampType, geometryCoverage,
-                geometryColor);
+    GrProcessorSet::Analysis finalizeProcessors(const GrCaps& caps, const GrAppliedClip* clip,
+                                                GrClampType clampType,
+                                                GrProcessorAnalysisCoverage geometryCoverage,
+                                                GrProcessorAnalysisColor* geometryColor) {
+        return this->INHERITED::finalizeProcessors(caps, clip, fStencilSettings, clampType,
+                                                   geometryCoverage, geometryColor);
     }
 
-    GrProcessorSet::Analysis finalizeProcessors(
-            const GrCaps&, const GrAppliedClip*, bool hasMixedSampledCoverage, GrClampType,
-            GrProcessorAnalysisCoverage geometryCoverage, SkPMColor4f* geometryColor, bool*
-            wideColor);
+    GrProcessorSet::Analysis finalizeProcessors(const GrCaps&, const GrAppliedClip*, GrClampType,
+                                                GrProcessorAnalysisCoverage geometryCoverage,
+                                                SkPMColor4f* geometryColor, bool* wideColor);
 
     using GrSimpleMeshDrawOpHelper::aaType;
     using GrSimpleMeshDrawOpHelper::setAAType;

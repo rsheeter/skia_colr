@@ -31,12 +31,14 @@ EffectBuilder::EffectBuilderT EffectBuilder::findBuilder(const skjson::ObjectVal
         const char*    fName;
         EffectBuilderT fBuilder;
     } gBuilderInfo[] = {
+        { "ADBE Black&White"            , &EffectBuilder::attachBlackAndWhiteEffect      },
         { "ADBE Brightness & Contrast 2", &EffectBuilder::attachBrightnessContrastEffect },
         { "ADBE Corner Pin"             , &EffectBuilder::attachCornerPinEffect          },
         { "ADBE Displacement Map"       , &EffectBuilder::attachDisplacementMapEffect    },
         { "ADBE Drop Shadow"            , &EffectBuilder::attachDropShadowEffect         },
         { "ADBE Easy Levels2"           , &EffectBuilder::attachEasyLevelsEffect         },
         { "ADBE Fill"                   , &EffectBuilder::attachFillEffect               },
+        { "ADBE Fractal Noise"          , &EffectBuilder::attachFractalNoiseEffect       },
         { "ADBE Gaussian Blur 2"        , &EffectBuilder::attachGaussianBlurEffect       },
         { "ADBE Geometry2"              , &EffectBuilder::attachTransformEffect          },
         { "ADBE HUE SATURATION"         , &EffectBuilder::attachHueSaturationEffect      },
@@ -46,10 +48,12 @@ EffectBuilder::EffectBuilderT EffectBuilder::findBuilder(const skjson::ObjectVal
         { "ADBE Radial Wipe"            , &EffectBuilder::attachRadialWipeEffect         },
         { "ADBE Ramp"                   , &EffectBuilder::attachGradientEffect           },
         { "ADBE Shift Channels"         , &EffectBuilder::attachShiftChannelsEffect      },
+        { "ADBE Threshold2"             , &EffectBuilder::attachThresholdEffect          },
         { "ADBE Tile"                   , &EffectBuilder::attachMotionTileEffect         },
         { "ADBE Tint"                   , &EffectBuilder::attachTintEffect               },
         { "ADBE Tritone"                , &EffectBuilder::attachTritoneEffect            },
         { "ADBE Venetian Blinds"        , &EffectBuilder::attachVenetianBlindsEffect     },
+        { "CC Sphere"                   , &EffectBuilder::attachSphereEffect             },
     };
 
     const skjson::StringValue* mn = jeffect["mn"];
@@ -111,7 +115,7 @@ sk_sp<sksg::RenderNode> EffectBuilder::attachEffects(const skjson::ArrayValue& j
             continue;
         }
 
-        const AnimationBuilder::AutoPropertyTracker apt(fBuilder, *jeffect);
+        const AnimationBuilder::AutoPropertyTracker apt(fBuilder, *jeffect, PropertyObserver::NodeType::EFFECT);
         layer = (this->*builder)(*jprops, std::move(layer));
 
         if (!layer) {

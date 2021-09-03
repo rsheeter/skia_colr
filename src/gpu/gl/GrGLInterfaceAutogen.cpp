@@ -205,7 +205,10 @@ bool GrGLInterface::validate() const {
         // all functions were marked optional or test_only
     }
 
-    if (GR_IS_GR_GL(fStandard) ||
+    if ((GR_IS_GR_GL(fStandard) && (
+          (glVer >= GR_GL_VER(3,0)) ||
+          fExtensions.has("GL_ARB_vertex_array_object") ||
+          fExtensions.has("GL_APPLE_vertex_array_object"))) ||
        (GR_IS_GR_GL_ES(fStandard) && (
           (glVer >= GR_GL_VER(3,0)) ||
           fExtensions.has("GL_OES_vertex_array_object"))) ||
@@ -275,7 +278,8 @@ bool GrGLInterface::validate() const {
           fExtensions.has("GL_EXT_draw_instanced"))) ||
        (GR_IS_GR_GL_ES(fStandard) && (
           (glVer >= GR_GL_VER(3,0)) ||
-          fExtensions.has("GL_EXT_draw_instanced"))) ||
+          fExtensions.has("GL_EXT_draw_instanced") ||
+          fExtensions.has("GL_ANGLE_instanced_arrays"))) ||
        (GR_IS_GR_WEBGL(fStandard) && (
           (glVer >= GR_GL_VER(2,0))))) {
         if (!fFunctions.fDrawArraysInstanced ||
@@ -289,7 +293,9 @@ bool GrGLInterface::validate() const {
           fExtensions.has("GL_ARB_base_instance"))) ||
        (GR_IS_GR_GL_ES(fStandard) && (
           fExtensions.has("GL_EXT_base_instance") ||
-          fExtensions.has("GL_ANGLE_base_vertex_base_instance")))) {
+          fExtensions.has("GL_ANGLE_base_vertex_base_instance"))) ||
+       (GR_IS_GR_WEBGL(fStandard) && (
+          fExtensions.has("GL_WEBGL_draw_instanced_base_vertex_base_instance")))) {
         if (!fFunctions.fDrawArraysInstancedBaseInstance ||
             !fFunctions.fDrawElementsInstancedBaseVertexBaseInstance) {
             RETURN_FALSE_INTERFACE;
@@ -319,7 +325,9 @@ bool GrGLInterface::validate() const {
     }
 
     if ((GR_IS_GR_GL_ES(fStandard) && (
-          fExtensions.has("GL_ANGLE_base_vertex_base_instance")))) {
+          fExtensions.has("GL_ANGLE_base_vertex_base_instance"))) ||
+       (GR_IS_GR_WEBGL(fStandard) && (
+          fExtensions.has("GL_WEBGL_multi_draw_instanced_base_vertex_base_instance")))) {
         if (!fFunctions.fMultiDrawArraysInstancedBaseInstance ||
             !fFunctions.fMultiDrawElementsInstancedBaseVertexBaseInstance) {
             RETURN_FALSE_INTERFACE;
@@ -429,7 +437,8 @@ bool GrGLInterface::validate() const {
           fExtensions.has("GL_ARB_instanced_arrays"))) ||
        (GR_IS_GR_GL_ES(fStandard) && (
           (glVer >= GR_GL_VER(3,0)) ||
-          fExtensions.has("GL_EXT_instanced_arrays"))) ||
+          fExtensions.has("GL_EXT_instanced_arrays") ||
+          fExtensions.has("GL_ANGLE_instanced_arrays"))) ||
        (GR_IS_GR_WEBGL(fStandard) && (
           (glVer >= GR_GL_VER(2,0))))) {
         if (!fFunctions.fVertexAttribDivisor) {
@@ -477,6 +486,7 @@ bool GrGLInterface::validate() const {
           fExtensions.has("GL_EXT_framebuffer_blit"))) ||
        (GR_IS_GR_GL_ES(fStandard) && (
           (glVer >= GR_GL_VER(3,0)) ||
+          fExtensions.has("GL_NV_framebuffer_blit") ||
           fExtensions.has("GL_CHROMIUM_framebuffer_multisample") ||
           fExtensions.has("GL_ANGLE_framebuffer_blit"))) ||
        (GR_IS_GR_WEBGL(fStandard) && (
@@ -577,58 +587,6 @@ bool GrGLInterface::validate() const {
         if (!fFunctions.fInsertEventMarker ||
             !fFunctions.fPopGroupMarker ||
             !fFunctions.fPushGroupMarker) {
-            RETURN_FALSE_INTERFACE;
-        }
-    }
-
-    if ((GR_IS_GR_GL(fStandard) && (
-          (glVer >= GR_GL_VER(4,3)) ||
-          fExtensions.has("GL_ARB_program_interface_query"))) ||
-       (GR_IS_GR_GL_ES(fStandard) && (
-          (glVer >= GR_GL_VER(3,1))))) {
-        if (!fFunctions.fGetProgramResourceLocation) {
-            RETURN_FALSE_INTERFACE;
-        }
-    }
-
-    if ((GR_IS_GR_GL(fStandard) && (
-          fExtensions.has("GL_NV_path_rendering"))) ||
-       (GR_IS_GR_GL_ES(fStandard) && (
-          fExtensions.has("GL_CHROMIUM_path_rendering") ||
-          fExtensions.has("GL_NV_path_rendering")))) {
-        if (!fFunctions.fMatrixLoadIdentity ||
-            !fFunctions.fMatrixLoadf) {
-            RETURN_FALSE_INTERFACE;
-        }
-    }
-
-    if ((GR_IS_GR_GL(fStandard) && (
-          fExtensions.has("GL_NV_path_rendering"))) ||
-       (GR_IS_GR_GL_ES(fStandard) && (
-          fExtensions.has("GL_CHROMIUM_path_rendering") ||
-          fExtensions.has("GL_NV_path_rendering")))) {
-        if (!fFunctions.fCoverFillPath ||
-            !fFunctions.fCoverFillPathInstanced ||
-            !fFunctions.fCoverStrokePath ||
-            !fFunctions.fCoverStrokePathInstanced ||
-            !fFunctions.fDeletePaths ||
-            !fFunctions.fGenPaths ||
-            !fFunctions.fIsPath ||
-            !fFunctions.fPathCommands ||
-            !fFunctions.fPathParameterf ||
-            !fFunctions.fPathParameteri ||
-            !fFunctions.fPathStencilFunc ||
-            !fFunctions.fStencilFillPath ||
-            !fFunctions.fStencilFillPathInstanced ||
-            !fFunctions.fStencilStrokePath ||
-            !fFunctions.fStencilStrokePathInstanced) {
-            RETURN_FALSE_INTERFACE;
-        }
-    }
-
-    if ((GR_IS_GR_GL_ES(fStandard) && (
-          fExtensions.has("GL_CHROMIUM_path_rendering")))) {
-        if (!fFunctions.fBindFragmentInputLocation) {
             RETURN_FALSE_INTERFACE;
         }
     }

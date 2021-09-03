@@ -8,7 +8,7 @@
 #ifndef GrMemoryPool_DEFINED
 #define GrMemoryPool_DEFINED
 
-#include "src/gpu/GrBlockAllocator.h"
+#include "src/core/SkBlockAllocator.h"
 
 #ifdef SK_DEBUG
 #include "include/private/SkTHash.h"
@@ -42,7 +42,7 @@ public:
      * time and keep around until pool destruction. The min alloc size is
      * the smallest allowed size of additional allocations. Both sizes are
      * adjusted to ensure that they are at least as large as kMinAllocationSize
-     * and less than GrBlockAllocator::kMaxAllocationSize.
+     * and less than SkBlockAllocator::kMaxAllocationSize.
      *
      * Both sizes are what the pool will end up allocating from the system, and
      * portions of the allocated memory is used for internal bookkeeping.
@@ -72,6 +72,13 @@ public:
     }
 
     /**
+     * In debug mode, this reports the IDs of unfreed nodes via `SkDebugf`. This reporting is also
+     * performed automatically whenever a GrMemoryPool is destroyed.
+     * In release mode, this method is a no-op.
+     */
+    void reportLeaks() const;
+
+    /**
      * Returns the total allocated size of the GrMemoryPool minus any preallocated amount
      */
     size_t size() const { return fAllocator.totalSize() - fAllocator.preallocSize(); }
@@ -84,6 +91,13 @@ public:
         return offsetof(GrMemoryPool, fAllocator) + fAllocator.preallocSize();
     }
 
+    /**
+     * Frees any scratch blocks that are no longer being used.
+     */
+    void resetScratchSpace() {
+        fAllocator.resetScratchSpace();
+    }
+
 #ifdef SK_DEBUG
     void validate() const;
 #endif
@@ -92,12 +106,14 @@ private:
     // Per-allocation overhead so that GrMemoryPool can always identify the block owning each and
     // release all occupied bytes, including any resulting from alignment padding.
     struct Header {
-#ifdef SK_DEBUG
-        int fSentinel; // known value to check for memory stomping (e.g., (CD)*)
-        int fID;       // ID that can be used to track down leaks by clients.
-#endif
         int fStart;
         int fEnd;
+#if defined(SK_DEBUG)
+        int fID;       // ID that can be used to track down leaks by clients.
+#endif
+#if defined(SK_DEBUG) || defined(SK_SANITIZE_ADDRESS)
+        int fSentinel; // set to a known value to check for memory stomping; poisoned in ASAN mode
+#endif
     };
 
     GrMemoryPool(size_t preallocSize, size_t minAllocSize);
@@ -107,42 +123,6 @@ private:
     int              fAllocationCount;
 #endif
 
-    GrBlockAllocator fAllocator; // Must be the last field, in order to use extra allocated space
-
-    friend class GrOpMemoryPool;
+    SkBlockAllocator fAllocator; // Must be the last field, in order to use extra allocated space
 };
-
-class GrOp;
-
-class GrOpMemoryPool {
-public:
-    static std::unique_ptr<GrOpMemoryPool> Make(size_t preallocSize, size_t minAllocSize);
-    void operator delete(void* p) { ::operator delete(p); }
-
-    template <typename Op, typename... OpArgs>
-    std::unique_ptr<Op> allocate(OpArgs&&... opArgs) {
-        #if defined(GR_OP_ALLOCATE_USE_NEW)
-            void* m = ::operator new(sizeof(Op));
-            Op* op =  new (m) Op(std::forward<OpArgs>(opArgs)...);
-            return std::unique_ptr<Op>(op);
-        #else
-            auto mem = this->allocate(sizeof(Op));
-            return std::unique_ptr<Op>(new (mem) Op(std::forward<OpArgs>(opArgs)...));
-        #endif
-    }
-
-    void* allocate(size_t size) { return fPool.allocate(size); }
-
-    #if !defined(GR_OP_ALLOCATE_USE_NEW)
-        void release(std::unique_ptr<GrOp> op);
-    #endif
-    bool isEmpty() const { return fPool.isEmpty(); }
-
-private:
-    GrOpMemoryPool(size_t preallocSize, size_t minAllocSize)
-            : fPool(preallocSize - offsetof(GrOpMemoryPool, fPool), minAllocSize) {}
-
-    GrMemoryPool fPool; // Must be the last field
-};
-
 #endif

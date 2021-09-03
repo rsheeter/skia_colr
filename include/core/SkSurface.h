@@ -31,7 +31,7 @@ class GrBackendRenderTarget;
 class GrBackendSemaphore;
 class GrBackendSurfaceMutableState;
 class GrBackendTexture;
-class GrContext;
+class GrDirectContext;
 class GrRecordingContext;
 class GrRenderTarget;
 
@@ -248,17 +248,6 @@ public:
                                                 const SkSurfaceProps* surfaceProps,
                                                 RenderTargetReleaseProc releaseProc = nullptr,
                                                 ReleaseContext releaseContext = nullptr);
-
-#if GR_TEST_UTILS
-    // TODO: Remove this.
-    static sk_sp<SkSurface> MakeFromBackendTextureAsRenderTarget(GrRecordingContext* context,
-                                                            const GrBackendTexture& backendTexture,
-                                                            GrSurfaceOrigin origin,
-                                                            int sampleCnt,
-                                                            SkColorType colorType,
-                                                            sk_sp<SkColorSpace> colorSpace,
-                                                            const SkSurfaceProps* surfaceProps);
-#endif
 
 #if defined(SK_BUILD_FOR_ANDROID) && __ANDROID_API__ >= 26
     /** Private.
@@ -631,12 +620,18 @@ public:
         @param canvas  SkCanvas drawn into
         @param x       horizontal offset in SkCanvas
         @param y       vertical offset in SkCanvas
+        @param sampling what technique to use when sampling the surface pixels
         @param paint   SkPaint containing SkBlendMode, SkColorFilter, SkImageFilter,
                        and so on; or nullptr
 
         example: https://fiddle.skia.org/c/@Surface_draw
     */
-    void draw(SkCanvas* canvas, SkScalar x, SkScalar y, const SkPaint* paint);
+    void draw(SkCanvas* canvas, SkScalar x, SkScalar y, const SkSamplingOptions& sampling,
+              const SkPaint* paint);
+
+    void draw(SkCanvas* canvas, SkScalar x, SkScalar y, const SkPaint* paint = nullptr) {
+        this->draw(canvas, x, y, SkSamplingOptions(), paint);
+    }
 
     /** Copies SkSurface pixel address, row bytes, and SkImageInfo to SkPixmap, if address
         is available, and returns true. If pixel address is not available, return
@@ -760,6 +755,7 @@ public:
         asyncRescaleAndReadPixelsYUV420().
      */
     using RescaleGamma = SkImage::RescaleGamma;
+    using RescaleMode  = SkImage::RescaleMode;
 
     /** Makes surface pixel data available to caller, possibly asynchronously. It can also rescale
         the surface pixels.
@@ -780,21 +776,21 @@ public:
         occur to guarantee a finite time before the callback is called.
 
         The data is valid for the lifetime of AsyncReadResult with the exception that if the
-        SkSurface is GPU-backed the data is immediately invalidated if the GrContext is abandoned
+        SkSurface is GPU-backed the data is immediately invalidated if the context is abandoned
         or destroyed.
 
         @param info            info of the requested pixels
         @param srcRect         subrectangle of surface to read
         @param rescaleGamma    controls whether rescaling is done in the surface's gamma or whether
                                the source data is transformed to a linear gamma before rescaling.
-        @param rescaleQuality  controls the quality (and cost) of the rescaling
+        @param rescaleMode     controls the technique of the rescaling
         @param callback        function to call with result of the read
         @param context         passed to callback
      */
     void asyncRescaleAndReadPixels(const SkImageInfo& info,
                                    const SkIRect& srcRect,
                                    RescaleGamma rescaleGamma,
-                                   SkFilterQuality rescaleQuality,
+                                   RescaleMode rescaleMode,
                                    ReadPixelsCallback callback,
                                    ReadPixelsContext context);
 
@@ -813,7 +809,7 @@ public:
         called.
 
         The data is valid for the lifetime of AsyncReadResult with the exception that if the
-        SkSurface is GPU-backed the data is immediately invalidated if the GrContext is abandoned
+        SkSurface is GPU-backed the data is immediately invalidated if the context is abandoned
         or destroyed.
 
         @param yuvColorSpace  The transformation from RGB to YUV. Applied to the resized image
@@ -823,7 +819,7 @@ public:
         @param dstSize        The size to rescale srcRect to
         @param rescaleGamma   controls whether rescaling is done in the surface's gamma or whether
                               the source data is transformed to a linear gamma before rescaling.
-        @param rescaleQuality controls the quality (and cost) of the rescaling
+        @param rescaleMode    controls the sampling technique of the rescaling
         @param callback       function to call with the planar read result
         @param context        passed to callback
      */
@@ -832,7 +828,7 @@ public:
                                          const SkIRect& srcRect,
                                          const SkISize& dstSize,
                                          RescaleGamma rescaleGamma,
-                                         SkFilterQuality rescaleQuality,
+                                         RescaleMode rescaleMode,
                                          ReadPixelsCallback callback,
                                          ReadPixelsContext context);
 
@@ -879,9 +875,10 @@ public:
     /** Call to ensure all reads/writes of the surface have been issued to the underlying 3D API.
         Skia will correctly order its own draws and pixel operations. This must to be used to ensure
         correct ordering when the surface backing store is accessed outside Skia (e.g. direct use of
-        the 3D API or a windowing system). GrContext has additional flush and submit methods that
-        apply to all surfaces and images created from a GrContext. This is equivalent to calling
-        SkSurface::flush with a default GrFlushInfo followed by GrContext::submit(syncCpu).
+        the 3D API or a windowing system). GrDirectContext has additional flush and submit methods
+        that apply to all surfaces and images created from a GrDirectContext. This is equivalent to
+        calling SkSurface::flush with a default GrFlushInfo followed by
+        GrDirectContext::submit(syncCpu).
     */
     void flushAndSubmit(bool syncCpu = false);
 
@@ -891,8 +888,8 @@ public:
     };
 
     /** Issues pending SkSurface commands to the GPU-backed API objects and resolves any SkSurface
-        MSAA. A call to GrContext::submit is always required to ensure work is actually sent to the
-        gpu. Some specific API details:
+        MSAA. A call to GrDirectContext::submit is always required to ensure work is actually sent
+        to the gpu. Some specific API details:
             GL: Commands are actually sent to the driver, but glFlush is never called. Thus some
                 sync objects from the flush will not be valid until a submission occurs.
 
@@ -937,8 +934,8 @@ public:
     GrSemaphoresSubmitted flush(BackendSurfaceAccess access, const GrFlushInfo& info);
 
     /** Issues pending SkSurface commands to the GPU-backed API objects and resolves any SkSurface
-        MSAA. A call to GrContext::submit is always required to ensure work is actually sent to the
-        gpu. Some specific API details:
+        MSAA. A call to GrDirectContext::submit is always required to ensure work is actually sent
+        to the gpu. Some specific API details:
             GL: Commands are actually sent to the driver, but glFlush is never called. Thus some
                 sync objects from the flush will not be valid until a submission occurs.
 
@@ -1017,18 +1014,25 @@ public:
     */
     bool characterize(SkSurfaceCharacterization* characterization) const;
 
-    /** Draws deferred display list created using SkDeferredDisplayListRecorder.
-        Has no effect and returns false if SkSurfaceCharacterization stored in
-        deferredDisplayList is not compatible with SkSurface.
+    /** Draws the deferred display list created via a SkDeferredDisplayListRecorder.
+        If the deferred display list is not compatible with this SkSurface, the draw is skipped
+        and false is return.
 
-        raster surface returns false.
+        The xOffset and yOffset parameters are experimental and, if not both zero, will cause
+        the draw to be ignored.
+        When implemented, if xOffset or yOffset are non-zero, the DDL will be drawn offset by that
+        amount into the surface.
 
         @param deferredDisplayList  drawing commands
+        @param xOffset              x-offset at which to draw the DDL
+        @param yOffset              y-offset at which to draw the DDL
         @return                     false if deferredDisplayList is not compatible
 
         example: https://fiddle.skia.org/c/@Surface_draw_2
     */
-    bool draw(sk_sp<const SkDeferredDisplayList> deferredDisplayList);
+    bool draw(sk_sp<const SkDeferredDisplayList> deferredDisplayList,
+              int xOffset = 0,
+              int yOffset = 0);
 
 protected:
     SkSurface(int width, int height, const SkSurfaceProps* surfaceProps);

@@ -11,13 +11,12 @@
 #include "fuzz/Fuzz.h"
 
 bool FuzzSKSL2Metal(sk_sp<SkData> bytes) {
-    SkSL::Compiler compiler;
+    sk_sp<GrShaderCaps> caps = SkSL::ShaderCapsFactory::Default();
+    SkSL::Compiler compiler(caps.get());
     SkSL::String output;
     SkSL::Program::Settings settings;
-    sk_sp<GrShaderCaps> caps = SkSL::ShaderCapsFactory::Default();
-    settings.fCaps = caps.get();
     std::unique_ptr<SkSL::Program> program = compiler.convertProgram(
-                                                    SkSL::Program::kFragment_Kind,
+                                                    SkSL::ProgramKind::kFragment,
                                                     SkSL::String((const char*) bytes->data(),
                                                                  bytes->size()),
                                                     settings);

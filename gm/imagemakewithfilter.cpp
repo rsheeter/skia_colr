@@ -98,9 +98,9 @@ static sk_sp<SkImageFilter> arithmetic_factory(sk_sp<SkImage> auxImage, const Sk
                                       nullptr, cropRect);
 }
 
-static sk_sp<SkImageFilter> xfermode_factory(sk_sp<SkImage> auxImage, const SkIRect* cropRect) {
+static sk_sp<SkImageFilter> blend_factory(sk_sp<SkImage> auxImage, const SkIRect* cropRect) {
     sk_sp<SkImageFilter> background = SkImageFilters::Image(std::move(auxImage));
-    return SkImageFilters::Xfermode(
+    return SkImageFilters::Blend(
             SkBlendMode::kModulate, std::move(background), nullptr, cropRect);
 }
 
@@ -120,7 +120,7 @@ static sk_sp<SkImageFilter> matrix_factory(sk_sp<SkImage> auxImage, const SkIRec
     matrix.setRotate(45.f, 50.f, 50.f);
 
     // This doesn't support a cropRect
-    return SkImageFilters::MatrixTransform(matrix, kLow_SkFilterQuality, nullptr);
+    return SkImageFilters::MatrixTransform(matrix, SkSamplingOptions(SkFilterMode::kLinear), nullptr);
 }
 
 static sk_sp<SkImageFilter> alpha_threshold_factory(sk_sp<SkImage> auxImage,
@@ -216,7 +216,8 @@ protected:
         // Resize to 100x100
         surface->getCanvas()->drawImageRect(
                 colorImage, SkRect::MakeWH(colorImage->width(), colorImage->height()),
-                SkRect::MakeWH(info.width(), info.height()), nullptr);
+                SkRect::MakeWH(info.width(), info.height()), SkSamplingOptions(), nullptr,
+                                            SkCanvas::kStrict_SrcRectConstraint);
         fMainImage = surface->makeImageSnapshot();
 
         ToolUtils::draw_checkerboard(surface->getCanvas());
@@ -233,7 +234,7 @@ protected:
             erode_factory,
             displacement_factory,
             arithmetic_factory,
-            xfermode_factory,
+            blend_factory,
             convolution_factory,
             matrix_factory,
             alpha_threshold_factory,
@@ -249,7 +250,7 @@ protected:
             "Erode",
             "Displacement",
             "Arithmetic",
-            "Xfer Mode",
+            "Xfer Mode", // "blend"
             "Convolution",
             "Matrix Xform",
             "Alpha Threshold",
@@ -319,7 +320,7 @@ protected:
                 // filtered result.
                 SkPaint alpha;
                 alpha.setAlphaf(0.3f);
-                canvas->drawImage(mainImage, 0, 0, &alpha);
+                canvas->drawImage(mainImage, 0, 0, SkSamplingOptions(), &alpha);
 
                 this->drawImageWithFilter(canvas, mainImage, auxImage, filters[i], clipBound,
                                           subset, &outSubset);
@@ -368,7 +369,9 @@ private:
             canvas->saveLayer(nullptr, &paint);
 
             // Draw the original subset of the image
-            canvas->drawImageRect(mainImage, subset, SkRect::Make(subset), nullptr);
+            SkRect r = SkRect::Make(subset);
+            canvas->drawImageRect(mainImage, r, r, SkSamplingOptions(),
+                                  nullptr, SkCanvas::kStrict_SrcRectConstraint);
 
             *dstRect = subset;
         } else {
@@ -385,7 +388,9 @@ private:
 
             *dstRect = SkIRect::MakeXYWH(offset.x(), offset.y(),
                                          outSubset.width(), outSubset.height());
-            canvas->drawImageRect(result, outSubset, SkRect::Make(*dstRect), nullptr);
+            canvas->drawImageRect(result, SkRect::Make(outSubset), SkRect::Make(*dstRect),
+                                  SkSamplingOptions(), nullptr,
+                                  SkCanvas::kStrict_SrcRectConstraint);
         }
     }
 

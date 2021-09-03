@@ -210,7 +210,6 @@ static skui::ModifierKey get_modifiers(UINT message, WPARAM wParam, LPARAM lPara
 LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     PAINTSTRUCT ps;
-    HDC hdc;
 
     Window_win* window = (Window_win*) GetWindowLongPtr(hWnd, GWLP_USERDATA);
 
@@ -218,7 +217,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 
     switch (message) {
         case WM_PAINT:
-            hdc = BeginPaint(hWnd, &ps);
+            BeginPaint(hWnd, &ps);
             window->onPaint();
             EndPaint(hWnd, &ps);
             eventHandled = true;
@@ -348,6 +347,7 @@ void Window_win::show() {
 
 bool Window_win::attach(BackendType attachType) {
     fBackend = attachType;
+    fInitializedBackend = true;
 
     switch (attachType) {
 #ifdef SK_GL
@@ -403,7 +403,9 @@ void Window_win::setRequestedDisplayParams(const DisplayParams& params, bool all
         fWindowContext = nullptr;
         this->closeWindow();
         this->init(fHInstance);
-        this->attach(fBackend);
+        if (fInitializedBackend) {
+            this->attach(fBackend);
+        }
     }
 
     INHERITED::setRequestedDisplayParams(params, allowReattach);

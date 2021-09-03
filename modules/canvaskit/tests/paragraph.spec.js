@@ -106,6 +106,23 @@ describe('Paragraph Behavior', function() {
             end: 26,
         });
 
+
+        const lineMetrics = paragraph.getLineMetrics();
+        expect(lineMetrics.length).toEqual(8); // 8 lines worth of metrics
+        const flm = lineMetrics[0]; // First Line Metric
+        expect(flm.startIndex).toEqual(0);
+        expect(flm.endExcludingWhitespaces).toEqual(14)
+        expect(flm.endIndex).toEqual(14); // Including whitespaces but excluding newlines
+        expect(flm.endIncludingNewline).toEqual(15);
+        expect(flm.lineNumber).toEqual(0);
+        expect(flm.isHardBreak).toEqual(true);
+        expect(flm.ascent).toBeCloseTo(21.377, 3);
+        expect(flm.descent).toBeCloseTo(5.859, 3);
+        expect(flm.height).toBeCloseTo(27.000, 3);
+        expect(flm.width).toBeCloseTo(172.360, 3);
+        expect(flm.left).toBeCloseTo(13.818, 3);
+        expect(flm.baseline).toBeCloseTo(21.141, 3);
+
         canvas.clear(CanvasKit.WHITE);
         canvas.drawRect(CanvasKit.LTRBRect(10, 10, wrapTo+10, 230), paint);
         canvas.drawParagraph(paragraph, 10, 10);
@@ -489,6 +506,7 @@ describe('Paragraph Behavior', function() {
                 p.delete();
             }
         }
+        expect(CanvasKit.RectHeightStyle.Strut).toBeTruthy();
 
         fontMgr.delete();
         paragraph.delete();
@@ -785,6 +803,82 @@ describe('Paragraph Behavior', function() {
         fontMgr.delete();
         paragraph.delete();
         builder.delete();
+    });
+
+    gm('paragraph_text_styles_mixed_leading_distribution', (canvas) => {
+        const fontMgr = CanvasKit.FontMgr.FromData(notoSerifFontBuffer);
+        expect(fontMgr.countFamilies()).toEqual(1);
+        expect(fontMgr.getFamilyName(0)).toEqual('Noto Serif');
+
+        const wrapTo = 200;
+
+        const paraStyle = new CanvasKit.ParagraphStyle({
+            textStyle: {
+                color: CanvasKit.BLACK,
+                backgroundColor: CanvasKit.Color(234, 208, 232), // light pink
+                fontFamilies: ['Noto Serif'],
+                fontSize: 10,
+                heightMultiplier: 10,
+            },
+        });
+
+        const builder = CanvasKit.ParagraphBuilder.Make(paraStyle, fontMgr);
+        builder.addText('Not half leading');
+
+        const halfLeadingText = new CanvasKit.TextStyle({
+            color: CanvasKit.Color(48, 37, 199),
+            backgroundColor: CanvasKit.Color(234, 208, 232), // light pink
+            fontFamilies: ['Noto Serif'],
+            fontSize: 10,
+            heightMultiplier: 10,
+            halfLeading: true,
+        });
+        builder.pushStyle(halfLeadingText);
+        builder.addText('Half Leading Text');
+        const paragraph = builder.build();
+
+        paragraph.layout(wrapTo);
+        canvas.clear(CanvasKit.WHITE);
+        canvas.drawParagraph(paragraph, 0, 0);
+
+        fontMgr.delete();
+        paragraph.delete();
+        builder.delete();
+    });
+
+    gm('paragraph_mixed_text_height_behavior', (canvas) => {
+        const fontMgr = CanvasKit.FontMgr.FromData(notoSerifFontBuffer);
+        expect(fontMgr.countFamilies()).toEqual(1);
+        expect(fontMgr.getFamilyName(0)).toEqual('Noto Serif');
+        canvas.clear(CanvasKit.WHITE);
+        const paint = new CanvasKit.Paint();
+        paint.setColor(CanvasKit.RED);
+        paint.setStyle(CanvasKit.PaintStyle.Stroke);
+
+        const wrapTo = 220;
+        const behaviors = ["All", "DisableFirstAscent", "DisableLastDescent", "DisableAll"];
+
+        for (let i = 0; i < behaviors.length; i++) {
+            const style = new CanvasKit.ParagraphStyle({
+                textStyle: {
+                    color: CanvasKit.BLACK,
+                    fontFamilies: ['Noto Serif'],
+                    fontSize: 20,
+                    heightMultiplier: 3, // make the difference more obvious
+                },
+                textHeightBehavior: CanvasKit.TextHeightBehavior[behaviors[i]],
+            });
+            const builder = CanvasKit.ParagraphBuilder.Make(style, fontMgr);
+            builder.addText('Text height behavior\nof '+behaviors[i]);
+            const paragraph = builder.build();
+            paragraph.layout(wrapTo);
+            canvas.drawParagraph(paragraph, 0, 150 * i);
+            canvas.drawRect(CanvasKit.LTRBRect(0, 150 * i, wrapTo, 150 * i + 120), paint);
+            paragraph.delete();
+            builder.delete();
+        }
+        paint.delete();
+        fontMgr.delete();
     });
 
     it('should not crash if we omit font family on pushed textStyle', () => {

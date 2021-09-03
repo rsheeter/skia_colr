@@ -170,7 +170,7 @@ public:
         // Get valid front data.
         fBackgroundAnimationTask.wait();
         this->runAnimationTask(0, 0, screenWidth, screenHeight);
-        memcpy(fFrontMatrices, fBackMatrices, kNumPaths * sizeof(SkMatrix));
+        std::copy_n(fBackMatrices.get(), kNumPaths, fFrontMatrices.get());
         fLastTick = 0;
     }
 
@@ -241,8 +241,8 @@ protected:
     };
 
     Velocity fVelocities[kNumPaths];
-    SkAutoTMalloc<SkMatrix> fFrontMatrices;
-    SkAutoTMalloc<SkMatrix> fBackMatrices;
+    SkAutoTArray<SkMatrix> fFrontMatrices;
+    SkAutoTArray<SkMatrix> fBackMatrices;
     SkTaskGroup fBackgroundAnimationTask;
     double fLastTick;
 };
@@ -271,9 +271,9 @@ public:
     /**
      * Called on a background thread. Here we can only modify fBackPaths.
      */
-    void runAnimationTask(double t, double dt, int w, int h) override {
+    void runAnimationTask(double t, double dt, int width, int height) override {
         const float tsec = static_cast<float>(t);
-        this->MovingGlyphAnimator::runAnimationTask(t, 0.5 * dt, w, h);
+        this->MovingGlyphAnimator::runAnimationTask(t, 0.5 * dt, width, height);
 
         for (int i = 0; i < kNumPaths; ++i) {
             const Glyph& glyph = fGlyphs[i];

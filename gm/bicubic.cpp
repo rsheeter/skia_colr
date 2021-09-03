@@ -12,6 +12,12 @@
 DEF_SIMPLE_GM(bicubic, canvas, 300, 320) {
     canvas->clear(SK_ColorBLACK);
 
+    const SkSamplingOptions gSamplings[] = {
+        SkSamplingOptions(SkFilterMode::kNearest),
+        SkSamplingOptions(SkFilterMode::kLinear),
+        SkSamplingOptions(SkCubicResampler::Mitchell()),
+    };
+
     auto make_img = []() {
         auto surf = SkSurface::MakeRasterN32Premul(7, 7);
         surf->getCanvas()->drawColor(SK_ColorBLACK);
@@ -25,10 +31,8 @@ DEF_SIMPLE_GM(bicubic, canvas, 300, 320) {
     auto img = make_img();
 
     canvas->scale(40, 8);
-    for (auto q : {kNone_SkFilterQuality, kLow_SkFilterQuality, kHigh_SkFilterQuality}) {
-        SkPaint p;
-        p.setFilterQuality(q);
-        canvas->drawImage(img, 0, 0, &p);
+    for (const auto& s : gSamplings) {
+        canvas->drawImage(img, 0, 0, s, nullptr);
         canvas->translate(0, img->height() + 1.0f);
     }
 
@@ -36,11 +40,12 @@ DEF_SIMPLE_GM(bicubic, canvas, 300, 320) {
     SkPaint paint;
 
     SkImage::CubicResampler cubics[] = {
-        {      0, 1.0f/2 },
-        { 1.0f/3, 1.0f/3 },
+        SkCubicResampler::CatmullRom(),
+        SkCubicResampler::Mitchell(),
     };
     for (auto c : cubics) {
-        paint.setShader(img->makeShader(SkTileMode::kClamp, SkTileMode::kClamp, c));
+        paint.setShader(img->makeShader(SkTileMode::kClamp, SkTileMode::kClamp,
+                                        SkSamplingOptions(c)));
         canvas->drawRect(r, paint);
         canvas->translate(0, img->height() + 1.0f);
     }

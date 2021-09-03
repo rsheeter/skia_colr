@@ -13,11 +13,12 @@
 
 #include "include/gpu/vk/GrVkVulkan.h"
 
+#include "include/core/SkBitmap.h"
 #include "include/core/SkDrawable.h"
 #include "include/core/SkSurface.h"
 #include "include/gpu/GrBackendDrawableInfo.h"
 #include "include/gpu/GrDirectContext.h"
-#include "src/gpu/GrContextPriv.h"
+#include "src/gpu/GrDirectContextPriv.h"
 #include "src/gpu/vk/GrVkGpu.h"
 #include "src/gpu/vk/GrVkInterface.h"
 #include "src/gpu/vk/GrVkMemory.h"
@@ -157,8 +158,9 @@ public:
         surf->getCanvas()->clear(SK_ColorRED);
 
         SkRect dstRect = SkRect::MakeXYWH(3*td->fWidth/4, 0, td->fWidth/4, td->fHeight);
-        SkIRect srcRect = SkIRect::MakeWH(td->fWidth/4, td->fHeight);
-        canvas->drawImageRect(surf->makeImageSnapshot(), srcRect, dstRect, &paint);
+        SkRect srcRect = SkRect::MakeIWH(td->fWidth/4, td->fHeight);
+        canvas->drawImageRect(surf->makeImageSnapshot(), srcRect, dstRect, SkSamplingOptions(),
+                              &paint, SkCanvas::kStrict_SrcRectConstraint);
 
         td->fDrawContext->flush();
     }
@@ -170,7 +172,7 @@ public:
         // on before releasing the GrVkSecondaryCBDrawContext resources. To simulate that for this
         // test (and since we are running single threaded anyways), we will just force a sync of
         // the gpu and cpu here.
-        td->fDContext->priv().getGpu()->testingOnly_flushGpuAndSync();
+        td->fDContext->submit(true);
 
         td->fDrawContext->releaseResources();
         // We release the context here manually to test that we waited long enough before

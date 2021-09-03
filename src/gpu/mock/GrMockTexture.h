@@ -8,8 +8,8 @@
 #define GrMockTexture_DEFINED
 
 #include "include/gpu/mock/GrMockTypes.h"
+#include "src/gpu/GrAttachment.h"
 #include "src/gpu/GrRenderTarget.h"
-#include "src/gpu/GrStencilAttachment.h"
 #include "src/gpu/GrTexture.h"
 #include "src/gpu/mock/GrMockGpu.h"
 
@@ -100,8 +100,15 @@ public:
         this->registerWithCacheWrapped(GrWrapCacheable::kNo);
     }
 
-    bool canAttemptStencilAttachment() const override { return true; }
-    bool completeStencilAttachment() override { return true; }
+    bool canAttemptStencilAttachment(bool useMSAASurface) const override {
+        SkASSERT(useMSAASurface == (this->numSamples() > 1));
+        return true;
+    }
+
+    bool completeStencilAttachment(GrAttachment*, bool useMSAASurface) override {
+        SkASSERT(useMSAASurface == (this->numSamples() > 1));
+        return true;
+    }
 
     size_t onGpuMemorySize() const override {
         int numColorSamples = this->numSamples();
@@ -115,7 +122,7 @@ public:
 
     GrBackendRenderTarget getBackendRenderTarget() const override {
         int numStencilBits = 0;
-        if (GrStencilAttachment* stencil = this->getStencilAttachment()) {
+        if (GrAttachment* stencil = this->getStencilAttachment()) {
             numStencilBits = GrBackendFormatStencilBits(stencil->backendFormat());
         }
         return {this->width(), this->height(), this->numSamples(), numStencilBits, fInfo};
@@ -182,10 +189,6 @@ public:
     GrBackendFormat backendFormat() const override {
         return GrMockTexture::backendFormat();
     }
-
-protected:
-    // This avoids an inherits via dominance warning on MSVC.
-    void willRemoveLastRef() override { GrTexture::willRemoveLastRef(); }
 
 private:
     void onAbandon() override {

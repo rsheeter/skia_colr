@@ -14,21 +14,35 @@
 namespace SkSL {
 
 /**
- * Represents 'true' or 'false'.
+ * Represents 'true' or 'false'. These are generally referred to as BoolLiteral, but Literal<bool>
+ * is also available for use with template code.
  */
-class BoolLiteral : public Expression {
+template <typename T> class Literal;
+using BoolLiteral = Literal<bool>;
+
+template <>
+class Literal<bool> final : public Expression {
 public:
     static constexpr Kind kExpressionKind = Kind::kBoolLiteral;
 
-    BoolLiteral(const Context& context, int offset, bool value)
-    : INHERITED(offset, BoolLiteralData{context.fBool_Type.get(), value}) {}
+    Literal(int offset, bool value, const Type* type)
+        : INHERITED(offset, kExpressionKind, type)
+        , fValue(value) {}
 
-    const Type& type() const override {
-        return *this->boolLiteralData().fType;
+    // Makes a literal of boolean type.
+    static std::unique_ptr<BoolLiteral> Make(const Context& context, int offset, bool value) {
+        return std::make_unique<BoolLiteral>(offset, value, context.fTypes.fBool.get());
+    }
+
+    // Makes a literal of boolean type. (Functionally identical to the above, but useful if you
+    // don't have access to the Context.)
+    static std::unique_ptr<BoolLiteral> Make(int offset, bool value, const Type* type) {
+        SkASSERT(type->isBoolean());
+        return std::make_unique<BoolLiteral>(offset, value, type);
     }
 
     bool value() const {
-        return this->boolLiteralData().fValue;
+        return fValue;
     }
 
     String description() const override {
@@ -43,18 +57,29 @@ public:
         return true;
     }
 
-    bool compareConstant(const Context& context, const Expression& other) const override {
-        const BoolLiteral& b = other.as<BoolLiteral>();
-        return this->value() == b.value();
+    ComparisonResult compareConstant(const Expression& other) const override {
+        if (!other.is<BoolLiteral>()) {
+            return ComparisonResult::kUnknown;
+        }
+        return this->value() == other.as<BoolLiteral>().value() ? ComparisonResult::kEqual
+                                                                : ComparisonResult::kNotEqual;
     }
 
     std::unique_ptr<Expression> clone() const override {
-        return std::unique_ptr<Expression>(new BoolLiteral(fOffset, this->value(), &this->type()));
+        return std::make_unique<BoolLiteral>(fOffset, this->value(), &this->type());
+    }
+
+    bool allowsConstantSubexpressions() const override {
+        return true;
+    }
+
+    const Expression* getConstantSubexpression(int n) const override {
+        SkASSERT(n == 0);
+        return this;
     }
 
 private:
-    BoolLiteral(int offset, bool value, const Type* type)
-    : INHERITED(offset, BoolLiteralData{type, value}) {}
+    bool fValue;
 
     using INHERITED = Expression;
 };

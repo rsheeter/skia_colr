@@ -25,9 +25,8 @@ EMCC=`which emcc`
 EMCXX=`which em++`
 EMAR=`which emar`
 
-RELEASE_CONF="-Oz --closure 1 -DSK_RELEASE --pre-js $BASE_DIR/release.js \
-              -DGR_GL_CHECK_ALLOC_WITH_GET_ERROR=0"
-EXTRA_CFLAGS="\"-DSK_RELEASE\", \"-DGR_GL_CHECK_ALLOC_WITH_GET_ERROR=0\","
+RELEASE_CONF="-Oz --closure 1 -DSK_RELEASE --pre-js $BASE_DIR/release.js"
+EXTRA_CFLAGS="\"-DSK_RELEASE\","
 IS_OFFICIAL_BUILD="true"
 
 # Tracing will be disabled in release/profiling unless this flag is seen. Tracing will
@@ -40,7 +39,7 @@ fi
 if [[ $@ == *debug* ]]; then
   echo "Building a Debug build"
   EXTRA_CFLAGS="\"-DSK_DEBUG\","
-  RELEASE_CONF="-O0 --js-opts 0 -s DEMANGLE_SUPPORT=1 -s ASSERTIONS=1 -s GL_ASSERTIONS=1 -g4 \
+  RELEASE_CONF="-O0 --js-opts 0 -s DEMANGLE_SUPPORT=1 -s ASSERTIONS=1 -s GL_ASSERTIONS=1 -g3 \
                 --source-map-base /node_modules/canvaskit/bin/ -DSK_DEBUG --pre-js $BASE_DIR/debug.js"
   BUILD_DIR=${BUILD_DIR:="out/canvaskit_wasm_debug"}
 elif [[ $@ == *profiling* ]]; then
@@ -73,7 +72,7 @@ if [[ $@ == *cpu* ]]; then
   echo "Using the CPU backend instead of the GPU backend"
   GN_GPU="skia_enable_gpu=false"
   GN_GPU_FLAGS=""
-  WASM_GPU="-DSK_SUPPORT_GPU=0 --pre-js $BASE_DIR/cpu.js -s USE_WEBGL2=0"
+  WASM_GPU="-DSK_SUPPORT_GPU=0 -DSK_ENABLE_SKSL --pre-js $BASE_DIR/cpu.js -s USE_WEBGL2=0"
 fi
 
 SKP_JS="--pre-js $BASE_DIR/skp.js"
@@ -104,13 +103,13 @@ if [[ $@ == *no_skottie* ]]; then
   SKOTTIE_BINDINGS=""
 fi
 
-GN_VIEWER="skia_use_expat=false skia_enable_ccpr=false"
+GN_VIEWER="skia_use_expat=false skia_enable_skgpu_v2=false"
 VIEWER_BINDINGS=""
 VIEWER_LIB=""
 
 if [[ $@ == *viewer* ]]; then
   echo "Including viewer"
-  GN_VIEWER="skia_use_expat=true skia_enable_ccpr=true"
+  GN_VIEWER="skia_use_expat=true skia_enable_skgpu_v2=false"
   VIEWER_BINDINGS="$BASE_DIR/viewer_bindings.cpp"
   VIEWER_LIB="$BUILD_DIR/libviewer_wasm.a"
   IS_OFFICIAL_BUILD="false"
@@ -124,14 +123,12 @@ if [[ $@ == *no_managed_skottie* || $@ == *no_skottie* ]]; then
   MANAGED_SKOTTIE_BINDINGS="-DSK_INCLUDE_MANAGED_SKOTTIE=0"
 fi
 
-GN_PARTICLES="skia_enable_sksl_interpreter=true"
 PARTICLES_JS="--pre-js $BASE_DIR/particles.js"
 PARTICLES_BINDINGS="$BASE_DIR/particles_bindings.cpp"
 PARTICLES_LIB="$BUILD_DIR/libparticles.a"
 
 if [[ $@ == *no_particles* ]]; then
   echo "Omitting Particles"
-  GN_PARTICLES="skia_enable_sksl_interpreter=false"
   PARTICLES_JS=""
   PARTICLES_BINDINGS=""
   PARTICLES_LIB=""
@@ -156,6 +153,12 @@ if [[ $@ == *no_rt_shader* ]] ; then
   RT_SHADER_JS=""
 fi
 
+MATRIX_HELPER_JS="--pre-js $BASE_DIR/matrix.js"
+if [[ $@ == *no_matrix* ]]; then
+  echo "Omitting matrix helper code"
+  MATRIX_HELPER_JS=""
+fi
+
 HTML_CANVAS_API="--pre-js $BASE_DIR/htmlcanvas/preamble.js \
 --pre-js $BASE_DIR/htmlcanvas/util.js \
 --pre-js $BASE_DIR/htmlcanvas/color.js \
@@ -168,18 +171,21 @@ HTML_CANVAS_API="--pre-js $BASE_DIR/htmlcanvas/preamble.js \
 --pre-js $BASE_DIR/htmlcanvas/pattern.js \
 --pre-js $BASE_DIR/htmlcanvas/radialgradient.js \
 --pre-js $BASE_DIR/htmlcanvas/postamble.js "
-if [[ $@ == *no_canvas* ]]; then
+if [[ $@ == *no_canvas* || $@ == *no_matrix* ]]; then
+  # Note: HTML Canvas bindings depend on the matrix helpers.
   echo "Omitting bindings for HTML Canvas API"
   HTML_CANVAS_API=""
 fi
 
 GN_FONT="skia_enable_fontmgr_custom_directory=false "
+WOFF2_FONT="skia_use_freetype_woff2=true"
 FONT_CFLAGS=""
 BUILTIN_FONT=""
 FONT_JS="--pre-js $BASE_DIR/font.js"
 if [[ $@ == *no_font* ]]; then
   echo "Omitting the built-in font(s), font manager and all code dealing with fonts"
   FONT_CFLAGS="-DSK_NO_FONTS"
+  WOFF2_FONT=""
   FONT_JS=""
   GN_FONT+="skia_enable_fontmgr_custom_embedded=false skia_enable_fontmgr_custom_empty=false"
 elif [[ $@ == *no_embedded_font* ]]; then
@@ -196,13 +202,18 @@ else
   GN_FONT+="skia_enable_fontmgr_custom_embedded=true skia_enable_fontmgr_custom_empty=false"
 fi
 
+if [[ $@ == *no_woff2* ]]; then
+  WOFF2_FONT="skia_use_freetype_woff2=false"
+fi
+
 if [[ $@ == *no_alias_font* ]]; then
 EXTRA_CFLAGS+="\"-DCANVASKIT_NO_ALIAS_FONT\","
 FONT_CFLAGS+=" -DCANVASKIT_NO_ALIAS_FONT"
 fi
 
 GN_SHAPER="skia_use_icu=true skia_use_system_icu=false skia_use_harfbuzz=true skia_use_system_harfbuzz=false"
-SHAPER_LIB="$BUILD_DIR/libharfbuzz.a \
+SHAPER_LIB="$BUILD_DIR/libskunicode.a \
+            $BUILD_DIR/libharfbuzz.a \
             $BUILD_DIR/libicu.a"
 if [[ $@ == *primitive_shaper* ]] || [[ $@ == *no_font* ]]; then
   echo "Using the primitive shaper instead of the harfbuzz/icu one"
@@ -213,7 +224,8 @@ fi
 PARAGRAPH_JS="--pre-js $BASE_DIR/paragraph.js"
 PARAGRAPH_LIB="$BUILD_DIR/libskparagraph.a"
 PARAGRAPH_BINDINGS="-DSK_INCLUDE_PARAGRAPH=1 \
-  $BASE_DIR/paragraph_bindings.cpp"
+  $BASE_DIR/paragraph_bindings.cpp \
+  $BASE_DIR/paragraph_bindings_gen.cpp"
 
 if [[ $@ == *no_paragraph* ]] || [[ $@ == *primitive_shaper* ]] || [[ $@ == *no_font* ]]; then
   echo "Omitting paragraph (must have fonts and non-primitive shaper)"
@@ -306,11 +318,10 @@ echo "Compiling bitcode"
   ${GN_SHAPER} \
   ${GN_GPU} \
   ${GN_FONT} \
-  ${GN_PARTICLES} \
+  ${WOFF2_FONT} \
   ${GN_VIEWER} \
   \
   skia_enable_skshaper=true \
-  skia_enable_nvpr=false \
   skia_enable_skparagraph=true \
   skia_enable_pdf=false"
 
@@ -357,8 +368,11 @@ EMCC_DEBUG=1 ${EMCXX} \
     --bind \
     --no-entry \
     --pre-js $BASE_DIR/preamble.js \
-    --pre-js $BASE_DIR/helper.js \
+    --pre-js $BASE_DIR/color.js \
+    --pre-js $BASE_DIR/memory.js \
+    --pre-js $BASE_DIR/util.js \
     --pre-js $BASE_DIR/interface.js \
+    $MATRIX_HELPER_JS \
     $PARAGRAPH_JS \
     $SKOTTIE_JS \
     $PARTICLES_JS \

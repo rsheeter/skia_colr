@@ -12,6 +12,7 @@
 #include "include/core/SkCanvas.h"
 #include "include/core/SkFont.h"
 #include "include/core/SkTime.h"
+#include "include/private/SkTPin.h"
 #include "modules/audioplayer/SkAudioPlayer.h"
 #include "modules/skottie/include/Skottie.h"
 #include "modules/skottie/utils/SkottieUtils.h"
@@ -128,7 +129,7 @@ void SkottieSlide::load(SkScalar w, SkScalar h) {
         }
 
         void report() const {
-            SkDebugf("Animation loaded with %lu error%s, %lu warning%s.\n",
+            SkDebugf("Animation loaded with %zu error%s, %zu warning%s.\n",
                      fErrors.size(), fErrors.size() == 1 ? "" : "s",
                      fWarnings.size(), fWarnings.size() == 1 ? "" : "s");
 
@@ -220,9 +221,8 @@ void SkottieSlide::draw(SkCanvas* canvas) {
             draw_stats_box(canvas, fAnimationStats);
         }
         if (fShowAnimationInval) {
-            const auto t = SkMatrix::MakeRectToRect(SkRect::MakeSize(fAnimation->size()),
-                                                    dstR,
-                                                    SkMatrix::kCenter_ScaleToFit);
+            const auto t = SkMatrix::RectToRect(SkRect::MakeSize(fAnimation->size()), dstR,
+                                                SkMatrix::kCenter_ScaleToFit);
             SkPaint fill, stroke;
             fill.setAntiAlias(true);
             fill.setColor(0x40ff0000);

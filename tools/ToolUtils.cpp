@@ -55,6 +55,7 @@ const char* colortype_name(SkColorType ct) {
         case kRGB_565_SkColorType:            return "RGB_565";
         case kARGB_4444_SkColorType:          return "ARGB_4444";
         case kRGBA_8888_SkColorType:          return "RGBA_8888";
+        case kSRGBA_8888_SkColorType:         return "SRGBA_8888";
         case kRGB_888x_SkColorType:           return "RGB_888x";
         case kBGRA_8888_SkColorType:          return "BGRA_8888";
         case kRGBA_1010102_SkColorType:       return "RGBA_1010102";
@@ -83,6 +84,7 @@ const char* colortype_depth(SkColorType ct) {
         case kRGB_565_SkColorType:            return "565";
         case kARGB_4444_SkColorType:          return "4444";
         case kRGBA_8888_SkColorType:          return "8888";
+        case kSRGBA_8888_SkColorType:         return "8888";
         case kRGB_888x_SkColorType:           return "888";
         case kBGRA_8888_SkColorType:          return "8888";
         case kRGBA_1010102_SkColorType:       return "1010102";
@@ -130,7 +132,7 @@ sk_sp<SkShader> create_checkerboard_shader(SkColor c1, SkColor c2, int size) {
     bm.eraseColor(c1);
     bm.eraseArea(SkIRect::MakeLTRB(0, 0, size, size), c2);
     bm.eraseArea(SkIRect::MakeLTRB(size, size, 2 * size, 2 * size), c2);
-    return bm.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat);
+    return bm.makeShader(SkTileMode::kRepeat, SkTileMode::kRepeat, SkSamplingOptions());
 }
 
 SkBitmap create_checkerboard_bitmap(int w, int h, SkColor c1, SkColor c2, int checkSize) {
@@ -140,6 +142,12 @@ SkBitmap create_checkerboard_bitmap(int w, int h, SkColor c1, SkColor c2, int ch
 
     ToolUtils::draw_checkerboard(&canvas, c1, c2, checkSize);
     return bitmap;
+}
+
+sk_sp<SkImage> create_checkerboard_image(int w, int h, SkColor c1, SkColor c2, int checkSize) {
+    auto surf = SkSurface::MakeRasterN32Premul(w, h);
+    ToolUtils::draw_checkerboard(surf->getCanvas(), c1, c2, checkSize);
+    return surf->makeImageSnapshot();
 }
 
 void draw_checkerboard(SkCanvas* canvas, SkColor c1, SkColor c2, int size) {
@@ -175,6 +183,11 @@ create_string_bitmap(int w, int h, SkColor c, int x, int y, int textSize, const 
     result.setInfo(SkImageInfo::MakeS32(w, h, kPremul_SkAlphaType));
     result.setPixelRef(sk_ref_sp(bitmap.pixelRef()), 0, 0);
     return result;
+}
+
+sk_sp<SkImage> create_string_image(int w, int h, SkColor c, int x, int y, int textSize,
+                                   const char* str) {
+    return create_string_bitmap(w, h, c, x, y, textSize, str).asImage();
 }
 
 void add_to_text_blob_w_len(SkTextBlobBuilder* builder,
@@ -246,7 +259,7 @@ SkPath make_star(const SkRect& bounds, int numPts, int step) {
         builder.lineTo(x, y);
     }
     SkPath path = builder.detach();
-    path.transform(SkMatrix::MakeRectToRect(path.getBounds(), bounds, SkMatrix::kFill_ScaleToFit));
+    path.transform(SkMatrix::RectToRect(path.getBounds(), bounds));
     return path;
 }
 
