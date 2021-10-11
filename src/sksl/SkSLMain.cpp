@@ -139,6 +139,10 @@ static bool detect_shader_settings(const SkSL::String& text,
                     static auto s_emulateAbsIntCaps = Factory::EmulateAbsIntFunction();
                     *caps = s_emulateAbsIntCaps.get();
                 }
+                if (settingsText.consumeSuffix(" FramebufferFetchSupport")) {
+                    static auto s_fbFetchSupport = Factory::FramebufferFetchSupport();
+                    *caps = s_fbFetchSupport.get();
+                }
                 if (settingsText.consumeSuffix(" IncompleteShortIntPrecision")) {
                     static auto s_incompleteShortIntCaps = Factory::IncompleteShortIntPrecision();
                     *caps = s_incompleteShortIntCaps.get();
@@ -409,15 +413,15 @@ ResultCode processCommand(std::vector<SkSL::String>& args) {
                         }
 
                         String sampleShader(int index, String coords) override {
-                            return "shade(child_" + SkSL::to_string(index) + ", " + coords + ")";
+                            return "child_" + SkSL::to_string(index) + ".eval(" + coords + ")";
                         }
 
                         String sampleColorFilter(int index, String color) override {
-                            return "filter(child_" + SkSL::to_string(index) + ", " + color + ")";
+                            return "child_" + SkSL::to_string(index) + ".eval(" + color + ")";
                         }
 
                         String sampleBlender(int index, String src, String dst) override {
-                            return "blend(child_" + SkSL::to_string(index) + ", " + src + ", " +
+                            return "child_" + SkSL::to_string(index) + ".eval(" + src + ", " +
                                    dst + ")";
                         }
 

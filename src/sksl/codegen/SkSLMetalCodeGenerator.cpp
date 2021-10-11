@@ -124,9 +124,6 @@ void MetalCodeGenerator::writeExpression(const Expression& expr, Precedence pare
         case Expression::Kind::kBinary:
             this->writeBinaryExpression(expr.as<BinaryExpression>(), parentPrecedence);
             break;
-        case Expression::Kind::kBoolLiteral:
-            this->writeBoolLiteral(expr.as<BoolLiteral>());
-            break;
         case Expression::Kind::kConstructorArray:
         case Expression::Kind::kConstructorStruct:
             this->writeAnyConstructor(expr.asAnyConstructor(), "{", "}", parentPrecedence);
@@ -149,14 +146,11 @@ void MetalCodeGenerator::writeExpression(const Expression& expr, Precedence pare
         case Expression::Kind::kConstructorCompoundCast:
             this->writeCastConstructor(expr.asAnyConstructor(), "(", ")", parentPrecedence);
             break;
-        case Expression::Kind::kIntLiteral:
-            this->writeIntLiteral(expr.as<IntLiteral>());
-            break;
         case Expression::Kind::kFieldAccess:
             this->writeFieldAccess(expr.as<FieldAccess>());
             break;
-        case Expression::Kind::kFloatLiteral:
-            this->writeFloatLiteral(expr.as<FloatLiteral>());
+        case Expression::Kind::kLiteral:
+            this->writeLiteral(expr.as<Literal>());
             break;
         case Expression::Kind::kFunctionCall:
             this->writeFunctionCall(expr.as<FunctionCall>());
@@ -467,22 +461,40 @@ String MetalCodeGenerator::getInversePolyfill(const ExpressionArray& arguments) 
     return "inverse";
 }
 
-static constexpr char kMatrixCompMult[] = R"(
+void MetalCodeGenerator::writeMatrixCompMult() {
+    static constexpr char kMatrixCompMult[] = R"(
 template <int C, int R>
-matrix<float, C, R> matrixCompMult(matrix<float, C, R> a, matrix<float, C, R> b) {
+matrix<float, C, R> matrixCompMult(matrix<float, C, R> a, const matrix<float, C, R> b) {
+    for (int c = 0; c < C; ++c) {
+        a[c] *= b[c];
+    }
+    return a;
+}
+)";
+
+    String name = "matrixCompMult";
+    if (fWrittenIntrinsics.find(name) == fWrittenIntrinsics.end()) {
+        fWrittenIntrinsics.insert(name);
+        fExtraFunctions.writeText(kMatrixCompMult);
+    }
+}
+
+void MetalCodeGenerator::writeOuterProduct() {
+    static constexpr char kOuterProduct[] = R"(
+template <int C, int R>
+matrix<float, C, R> outerProduct(const vec<float, R> a, const vec<float, C> b) {
     matrix<float, C, R> result;
     for (int c = 0; c < C; ++c) {
-        result[c] = a[c] * b[c];
+        result[c] = a * b[c];
     }
     return result;
 }
 )";
 
-void MetalCodeGenerator::writeMatrixCompMult() {
-    String name = "matrixCompMult";
+    String name = "outerProduct";
     if (fWrittenIntrinsics.find(name) == fWrittenIntrinsics.end()) {
         fWrittenIntrinsics.insert(name);
-        fExtraFunctions.writeText(kMatrixCompMult);
+        fExtraFunctions.writeText(kOuterProduct);
     }
 }
 
@@ -595,7 +607,66 @@ bool MetalCodeGenerator::writeIntrinsicCall(const FunctionCall& c, IntrinsicKind
             this->write(")");
             return true;
         }
-
+        case k_packUnorm2x16_IntrinsicKind: {
+            this->write("pack_float_to_unorm2x16(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write(")");
+            return true;
+        }
+        case k_unpackUnorm2x16_IntrinsicKind: {
+            this->write("unpack_unorm2x16_to_float(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write(")");
+            return true;
+        }
+        case k_packSnorm2x16_IntrinsicKind: {
+            this->write("pack_float_to_snorm2x16(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write(")");
+            return true;
+        }
+        case k_unpackSnorm2x16_IntrinsicKind: {
+            this->write("unpack_snorm2x16_to_float(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write(")");
+            return true;
+        }
+        case k_packUnorm4x8_IntrinsicKind: {
+            this->write("pack_float_to_unorm4x8(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write(")");
+            return true;
+        }
+        case k_unpackUnorm4x8_IntrinsicKind: {
+            this->write("unpack_unorm4x8_to_float(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write(")");
+            return true;
+        }
+        case k_packSnorm4x8_IntrinsicKind: {
+            this->write("pack_float_to_snorm4x8(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write(")");
+            return true;
+        }
+        case k_unpackSnorm4x8_IntrinsicKind: {
+            this->write("unpack_snorm4x8_to_float(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write(")");
+            return true;
+        }
+        case k_packHalf2x16_IntrinsicKind: {
+            this->write("as_type<uint>(half2(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write("))");
+            return true;
+        }
+        case k_unpackHalf2x16_IntrinsicKind: {
+            this->write("float2(as_type<half2>(");
+            this->writeExpression(*arguments[0], Precedence::kSequence);
+            this->write("))");
+            return true;
+        }
         case k_floatBitsToInt_IntrinsicKind:
         case k_floatBitsToUint_IntrinsicKind:
         case k_intBitsToFloat_IntrinsicKind:
@@ -768,6 +839,11 @@ bool MetalCodeGenerator::writeIntrinsicCall(const FunctionCall& c, IntrinsicKind
             this->writeSimpleIntrinsic(c);
             return true;
         }
+        case k_outerProduct_IntrinsicKind: {
+            this->writeOuterProduct();
+            this->writeSimpleIntrinsic(c);
+            return true;
+        }
         case k_mix_IntrinsicKind: {
             SkASSERT(c.arguments().size() == 3);
             if (arguments[2]->type().componentType().isBoolean()) {
@@ -871,13 +947,14 @@ void MetalCodeGenerator::assembleMatrixFromExpressions(const AnyConstructor& cto
     int argPosition = 0;
     auto args = ctor.argumentSpan();
 
+    static constexpr char kSwizzle[] = "xyzw";
     const char* separator = "";
-    for (int r = 0; r < rows; ++r) {
+    for (int c = 0; c < columns; ++c) {
         fExtraFunctions.printf("%s%s%d(", separator, matrixType.c_str(), rows);
         separator = "), ";
 
         const char* columnSeparator = "";
-        for (int c = 0; c < columns; ++c) {
+        for (int r = 0; r < rows;) {
             fExtraFunctions.writeText(columnSeparator);
             columnSeparator = ", ";
 
@@ -886,16 +963,26 @@ void MetalCodeGenerator::assembleMatrixFromExpressions(const AnyConstructor& cto
                 switch (argType.typeKind()) {
                     case Type::TypeKind::kScalar: {
                         fExtraFunctions.printf("x%zu", argIndex);
+                        ++r;
+                        ++argPosition;
                         break;
                     }
                     case Type::TypeKind::kVector: {
-                        fExtraFunctions.printf("x%zu[%d]", argIndex, argPosition);
+                        fExtraFunctions.printf("x%zu.", argIndex);
+                        do {
+                            fExtraFunctions.write8(kSwizzle[argPosition]);
+                            ++r;
+                            ++argPosition;
+                        } while (r < rows && argPosition < argType.columns());
                         break;
                     }
                     case Type::TypeKind::kMatrix: {
-                        fExtraFunctions.printf("x%zu[%d][%d]", argIndex,
-                                               argPosition / argType.rows(),
-                                               argPosition % argType.rows());
+                        fExtraFunctions.printf("x%zu[%d].", argIndex, argPosition / argType.rows());
+                        do {
+                            fExtraFunctions.write8(kSwizzle[argPosition]);
+                            ++r;
+                            ++argPosition;
+                        } while (r < rows && (argPosition % argType.rows()) != 0);
                         break;
                     }
                     default: {
@@ -905,7 +992,6 @@ void MetalCodeGenerator::assembleMatrixFromExpressions(const AnyConstructor& cto
                     }
                 }
 
-                ++argPosition;
                 if (argPosition >= argType.columns() * argType.rows()) {
                     ++argIndex;
                     argPosition = 0;
@@ -1590,23 +1676,24 @@ void MetalCodeGenerator::writePostfixExpression(const PostfixExpression& p,
     }
 }
 
-void MetalCodeGenerator::writeBoolLiteral(const BoolLiteral& b) {
-    this->write(b.value() ? "true" : "false");
-}
-
-void MetalCodeGenerator::writeIntLiteral(const IntLiteral& i) {
-    const Type& type = i.type();
-    if (type == *fContext.fTypes.fUInt) {
-        this->write(to_string(i.value() & 0xffffffff) + "u");
-    } else if (type == *fContext.fTypes.fUShort) {
-        this->write(to_string(i.value() & 0xffff) + "u");
-    } else {
-        this->write(to_string(i.value()));
+void MetalCodeGenerator::writeLiteral(const Literal& l) {
+    const Type& type = l.type();
+    if (type.isFloat()) {
+        this->write(to_string(l.floatValue()));
+        return;
     }
-}
-
-void MetalCodeGenerator::writeFloatLiteral(const FloatLiteral& f) {
-    this->write(to_string(f.value()));
+    if (type.isInteger()) {
+        if (type == *fContext.fTypes.fUInt) {
+            this->write(to_string(l.intValue() & 0xffffffff) + "u");
+        } else if (type == *fContext.fTypes.fUShort) {
+            this->write(to_string(l.intValue() & 0xffff) + "u");
+        } else {
+            this->write(to_string(l.intValue()));
+        }
+        return;
+    }
+    SkASSERT(type.isBoolean());
+    this->write(l.boolValue() ? "true" : "false");
 }
 
 void MetalCodeGenerator::writeSetting(const Setting& s) {

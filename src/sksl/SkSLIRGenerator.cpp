@@ -23,7 +23,6 @@
 #include "src/sksl/SkSLParser.h"
 #include "src/sksl/SkSLUtil.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
-#include "src/sksl/ir/SkSLBoolLiteral.h"
 #include "src/sksl/ir/SkSLBreakStatement.h"
 #include "src/sksl/ir/SkSLConstructor.h"
 #include "src/sksl/ir/SkSLContinueStatement.h"
@@ -34,7 +33,6 @@
 #include "src/sksl/ir/SkSLExternalFunctionReference.h"
 #include "src/sksl/ir/SkSLField.h"
 #include "src/sksl/ir/SkSLFieldAccess.h"
-#include "src/sksl/ir/SkSLFloatLiteral.h"
 #include "src/sksl/ir/SkSLForStatement.h"
 #include "src/sksl/ir/SkSLFunctionCall.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
@@ -43,9 +41,11 @@
 #include "src/sksl/ir/SkSLFunctionReference.h"
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
-#include "src/sksl/ir/SkSLIntLiteral.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
+#include "src/sksl/ir/SkSLLiteral.h"
+#include "src/sksl/ir/SkSLMethodReference.h"
 #include "src/sksl/ir/SkSLNop.h"
+#include "src/sksl/ir/SkSLPoison.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
 #include "src/sksl/ir/SkSLReturnStatement.h"
@@ -62,39 +62,13 @@
 
 namespace SkSL {
 
-class AutoSymbolTable {
-public:
-    AutoSymbolTable(IRGenerator* ir)
-    : fIR(ir)
-    , fPrevious(fIR->fSymbolTable) {
-        fIR->pushSymbolTable();
-    }
-
-    ~AutoSymbolTable() {
-        fIR->popSymbolTable();
-        SkASSERT(fPrevious == fIR->fSymbolTable);
-    }
-
-    IRGenerator* fIR;
-    std::shared_ptr<SymbolTable> fPrevious;
-};
-
 IRGenerator::IRGenerator(const Context* context)
         : fContext(*context) {}
-
-void IRGenerator::pushSymbolTable() {
-    auto childSymTable = std::make_shared<SymbolTable>(std::move(fSymbolTable), fIsBuiltinCode);
-    fSymbolTable = std::move(childSymTable);
-}
-
-void IRGenerator::popSymbolTable() {
-    fSymbolTable = fSymbolTable->fParent;
-}
 
 std::unique_ptr<Extension> IRGenerator::convertExtension(int offset, skstd::string_view name) {
     if (this->programKind() != ProgramKind::kFragment &&
         this->programKind() != ProgramKind::kVertex) {
-        this->errorReporter().error(offset, "extensions are not allowed here");
+        this->errorReporter().error(offset, "extensions are not allowed in this kind of program");
         return nullptr;
     }
 
@@ -136,14 +110,13 @@ std::unique_ptr<Statement> IRGenerator::convertStatement(const ASTNode& statemen
 
 std::unique_ptr<Block> IRGenerator::convertBlock(const ASTNode& block) {
     SkASSERT(block.fKind == ASTNode::Kind::kBlock);
-    AutoSymbolTable table(this);
+    AutoSymbolTable table(&fSymbolTable);
     StatementArray statements;
     for (const auto& child : block) {
         std::unique_ptr<Statement> statement = this->convertStatement(child);
-        if (!statement) {
-            return nullptr;
+        if (statement) {
+            statements.push_back(std::move(statement));
         }
-        statements.push_back(std::move(statement));
     }
     return Block::Make(block.fOffset, std::move(statements), fSymbolTable);
 }
@@ -364,7 +337,8 @@ StatementArray IRGenerator::convertVarDeclarations(const ASTNode& decls,
 std::unique_ptr<ModifiersDeclaration> IRGenerator::convertModifiersDeclaration(const ASTNode& m) {
     if (this->programKind() != ProgramKind::kFragment &&
         this->programKind() != ProgramKind::kVertex) {
-        this->errorReporter().error(m.fOffset, "layout qualifiers are not allowed here");
+        this->errorReporter().error(m.fOffset,
+                "layout qualifiers are not allowed in this kind of program");
         return nullptr;
     }
 
@@ -398,7 +372,7 @@ std::unique_ptr<Statement> IRGenerator::convertIf(const ASTNode& n) {
 
 std::unique_ptr<Statement> IRGenerator::convertFor(const ASTNode& f) {
     SkASSERT(f.fKind == ASTNode::Kind::kFor);
-    AutoSymbolTable table(this);
+    AutoSymbolTable table(&fSymbolTable);
     std::unique_ptr<Statement> initializer;
     auto iter = f.begin();
     if (*iter) {
@@ -470,7 +444,7 @@ std::unique_ptr<Statement> IRGenerator::convertSwitch(const ASTNode& s) {
     if (!value) {
         return nullptr;
     }
-    AutoSymbolTable table(this);
+    AutoSymbolTable table(&fSymbolTable);
     ExpressionArray caseValues;
     StatementArray caseStatements;
     for (; iter != s.end(); ++iter) {
@@ -517,14 +491,14 @@ std::unique_ptr<Statement> IRGenerator::convertReturn(int offset,
 std::unique_ptr<Statement> IRGenerator::convertReturn(const ASTNode& r) {
     SkASSERT(r.fKind == ASTNode::Kind::kReturn);
     if (r.begin() != r.end()) {
-        std::unique_ptr<Expression> value = this->convertExpression(*r.begin());
-        if (!value) {
-            return nullptr;
+        if (std::unique_ptr<Expression> value = this->convertExpression(*r.begin())) {
+            return this->convertReturn(r.fOffset, std::move(value));
+        } else {
+            return this->convertReturn(r.fOffset, Poison::Make(r.fOffset, fContext));
         }
-        return this->convertReturn(r.fOffset, std::move(value));
-    } else {
-        return this->convertReturn(r.fOffset, /*result=*/nullptr);
     }
+
+    return this->convertReturn(r.fOffset, /*result=*/nullptr);
 }
 
 std::unique_ptr<Statement> IRGenerator::convertBreak(const ASTNode& b) {
@@ -714,7 +688,7 @@ void IRGenerator::convertFunction(const ASTNode& f) {
                                                                         fIsBuiltinCode));
     } else {
         // Compile function body.
-        AutoSymbolTable table(this);
+        AutoSymbolTable table(&fSymbolTable);
         for (const Variable* param : decl->parameters()) {
             fSymbolTable->addWithoutOwnership(param);
         }
@@ -766,7 +740,8 @@ void IRGenerator::scanInterfaceBlock(SkSL::InterfaceBlock& intf) {
 std::unique_ptr<SkSL::InterfaceBlock> IRGenerator::convertInterfaceBlock(const ASTNode& intf) {
     if (this->programKind() != ProgramKind::kFragment &&
         this->programKind() != ProgramKind::kVertex) {
-        this->errorReporter().error(intf.fOffset, "interface block is not allowed here");
+        this->errorReporter().error(intf.fOffset,
+                "interface blocks are not allowed in this kind of program");
         return nullptr;
     }
 
@@ -777,7 +752,7 @@ std::unique_ptr<SkSL::InterfaceBlock> IRGenerator::convertInterfaceBlock(const A
     std::vector<Type::Field> fields;
     auto iter = intf.begin();
     {
-        AutoSymbolTable table(this);
+        AutoSymbolTable table(&fSymbolTable);
         symbols = fSymbolTable;
         for (size_t i = 0; i < id.fDeclarationCount; ++i) {
             StatementArray decls = this->convertVarDeclarations(*(iter++),
@@ -879,19 +854,19 @@ std::unique_ptr<Expression> IRGenerator::convertExpression(const ASTNode& expr) 
         case ASTNode::Kind::kBinary:
             return this->convertBinaryExpression(expr);
         case ASTNode::Kind::kBool:
-            return BoolLiteral::Make(fContext, expr.fOffset, expr.getBool());
+            return Literal::MakeBool(fContext, expr.fOffset, expr.getBool());
         case ASTNode::Kind::kCall:
             return this->convertCallExpression(expr);
         case ASTNode::Kind::kField:
             return this->convertFieldExpression(expr);
         case ASTNode::Kind::kFloat:
-            return FloatLiteral::Make(fContext, expr.fOffset, expr.getFloat());
+            return Literal::MakeFloat(fContext, expr.fOffset, expr.getFloat());
         case ASTNode::Kind::kIdentifier:
             return this->convertIdentifier(expr);
         case ASTNode::Kind::kIndex:
             return this->convertIndexExpression(expr);
         case ASTNode::Kind::kInt:
-            return IntLiteral::Make(fContext, expr.fOffset, expr.getInt());
+            return Literal::MakeInt(fContext, expr.fOffset, expr.getInt());
         case ASTNode::Kind::kPostfix:
             return this->convertPostfixExpression(expr);
         case ASTNode::Kind::kPrefix:
@@ -1050,7 +1025,7 @@ std::unique_ptr<Expression> IRGenerator::call(int offset,
  * the call is not valid.
  */
 CoercionCost IRGenerator::callCost(const FunctionDeclaration& function,
-                                   const ExpressionArray& arguments) {
+                                   const ExpressionArray& arguments) const {
     if (this->strictES2Mode() && (function.modifiers().fFlags & Modifiers::kES3_Flag)) {
         return CoercionCost::Impossible();
     }
@@ -1067,6 +1042,24 @@ CoercionCost IRGenerator::callCost(const FunctionDeclaration& function,
         total = total + arguments[i]->coercionCost(*types[i]);
     }
     return total;
+}
+
+const FunctionDeclaration* IRGenerator::findBestFunctionForCall(
+        const std::vector<const FunctionDeclaration*>& functions,
+        const ExpressionArray& arguments) const {
+    if (functions.size() == 1) {
+        return functions.front();
+    }
+    CoercionCost bestCost = CoercionCost::Impossible();
+    const FunctionDeclaration* best = nullptr;
+    for (const auto& f : functions) {
+        CoercionCost cost = this->callCost(*f, arguments);
+        if (cost < bestCost) {
+            bestCost = cost;
+            best = f;
+        }
+    }
+    return best;
 }
 
 std::unique_ptr<Expression> IRGenerator::call(int offset,
@@ -1102,31 +1095,41 @@ std::unique_ptr<Expression> IRGenerator::call(int offset,
         case Expression::Kind::kFunctionReference: {
             const FunctionReference& ref = functionValue->as<FunctionReference>();
             const std::vector<const FunctionDeclaration*>& functions = ref.functions();
-            CoercionCost bestCost = CoercionCost::Impossible();
-            const FunctionDeclaration* best = nullptr;
-            if (functions.size() > 1) {
-                for (const auto& f : functions) {
-                    CoercionCost cost = this->callCost(*f, arguments);
-                    if (cost < bestCost) {
-                        bestCost = cost;
-                        best = f;
-                    }
-                }
-                if (best) {
-                    return this->call(offset, *best, std::move(arguments));
-                }
-                String msg = "no match for " + functions[0]->name() + "(";
-                String separator;
-                for (size_t i = 0; i < arguments.size(); i++) {
-                    msg += separator;
-                    separator = ", ";
-                    msg += arguments[i]->type().displayName();
-                }
-                msg += ")";
-                this->errorReporter().error(offset, msg);
-                return nullptr;
+            const FunctionDeclaration* best = this->findBestFunctionForCall(functions, arguments);
+            if (best) {
+                return this->call(offset, *best, std::move(arguments));
             }
-            return this->call(offset, *functions[0], std::move(arguments));
+            String msg = "no match for " + functions[0]->name() + "(";
+            String separator;
+            for (size_t i = 0; i < arguments.size(); i++) {
+                msg += separator;
+                separator = ", ";
+                msg += arguments[i]->type().displayName();
+            }
+            msg += ")";
+            this->errorReporter().error(offset, msg);
+            return nullptr;
+        }
+        case Expression::Kind::kMethodReference: {
+            MethodReference& ref = functionValue->as<MethodReference>();
+            arguments.push_back(std::move(ref.self()));
+
+            const std::vector<const FunctionDeclaration*>& functions = ref.functions();
+            const FunctionDeclaration* best = this->findBestFunctionForCall(functions, arguments);
+            if (best) {
+                return this->call(offset, *best, std::move(arguments));
+            }
+            String msg = "no match for " + arguments.back()->type().displayName() +
+                         "::" + functions[0]->name().substr(1) + "(";
+            String separator;
+            for (size_t i = 0; i < arguments.size() - 1; i++) {
+                msg += separator;
+                separator = ", ";
+                msg += arguments[i]->type().displayName();
+            }
+            msg += ")";
+            this->errorReporter().error(offset, msg);
+            return nullptr;
         }
         case Expression::Kind::kPoison:
             return functionValue;
@@ -1197,8 +1200,8 @@ std::unique_ptr<Expression> IRGenerator::convertFieldExpression(const ASTNode& f
     }
     const skstd::string_view& field = fieldNode.getStringView();
     const Type& baseType = base->type();
-    if (baseType == *fContext.fTypes.fSkCaps || baseType.isStruct()) {
-        return FieldAccess::Convert(fContext, std::move(base), field);
+    if (baseType == *fContext.fTypes.fSkCaps || baseType.isStruct() || baseType.isEffectChild()) {
+        return FieldAccess::Convert(fContext, *fSymbolTable, std::move(base), field);
     }
     return this->convertSwizzle(std::move(base), field);
 }
@@ -1297,7 +1300,7 @@ void IRGenerator::start(const ParsedModule& base,
     fRTAdjust = nullptr;
     fRTAdjustInterfaceBlock = nullptr;
     fDefinedStructs.clear();
-    this->pushSymbolTable();
+    SymbolTable::Push(&fSymbolTable, fIsBuiltinCode);
 
     if (this->settings().fExternalFunctions) {
         // Add any external values to the new symbol table, so they're only visible to this Program.

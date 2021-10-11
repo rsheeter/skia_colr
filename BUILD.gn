@@ -1469,10 +1469,6 @@ group("modules") {
   ]
 }
 
-group("experimental") {
-  deps = [ "experimental/sktext" ]
-}
-
 config("our_vulkan_headers") {
   include_dirs = [ "include/third_party/vulkan" ]
 }
@@ -2057,7 +2053,6 @@ if (skia_enable_tools) {
       ":flags",
       ":gpu_tool_utils",
       ":xml",
-      "experimental/sktext:samples",
       "modules/audioplayer",
       "modules/skparagraph:samples",
       "modules/skshaper",
@@ -2471,6 +2466,7 @@ if (skia_enable_tools) {
         "modules/androidkit/src/AndroidKit.cpp",
         "modules/androidkit/src/Canvas.cpp",
         "modules/androidkit/src/ColorFilters.cpp",
+        "modules/androidkit/src/Font.cpp",
         "modules/androidkit/src/Gradients.cpp",
         "modules/androidkit/src/Image.cpp",
         "modules/androidkit/src/ImageFilter.cpp",
@@ -2496,7 +2492,6 @@ if (skia_enable_tools) {
       deps = [
         ":sk_app",
         ":skia",
-        "experimental/sktext:sktext",
         "modules/skottie:skottie",
       ]
     }
@@ -2753,7 +2748,6 @@ if (skia_enable_tools) {
         ":tool_utils",
         ":trace",
         "experimental/skrive",
-        "experimental/sktext",
         "modules/audioplayer",
         "modules/particles",
         "modules/skottie",
@@ -2872,10 +2866,6 @@ if (skia_enable_tools) {
     test_app("editor") {
       is_shared_library = is_android
       deps = [ "modules/skplaintexteditor:editor_app" ]
-    }
-    test_app("text_editor") {
-      is_shared_library = is_android
-      deps = [ "experimental/sktext:text_editor" ]
     }
   }
 

@@ -178,8 +178,12 @@ void GrMtlOpsRenderPass::onClearStencilClip(const GrScissorState& scissor, bool 
     }
 
     stencilAttachment.loadAction = MTLLoadActionClear;
-    fActiveRenderCmdEncoder =
-            fGpu->commandBuffer()->getRenderCommandEncoder(fRenderPassDesc, nullptr, this);
+    fActiveRenderCmdEncoder = this->setupResolve();
+
+    if (!fActiveRenderCmdEncoder) {
+        fActiveRenderCmdEncoder =
+                fGpu->commandBuffer()->getRenderCommandEncoder(fRenderPassDesc, nullptr, this);
+    }
 }
 
 void GrMtlOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUploadFn& upload) {
@@ -193,12 +197,17 @@ void GrMtlOpsRenderPass::inlineUpload(GrOpFlushState* state, GrDeferredTextureUp
         auto mtlStencil = fRenderPassDesc.stencilAttachment;
         mtlStencil.loadAction = MTLLoadActionLoad;
     }
-    // It's probably reasonable to create the new encoder at this point, though maybe not necessary.
-    fActiveRenderCmdEncoder =
-            fGpu->commandBuffer()->getRenderCommandEncoder(fRenderPassDesc, nullptr, this);
-    // TODO: If the previous renderCommandEncoder did a resolve without an MSAA store
+    // If the previous renderCommandEncoder did a resolve without an MSAA store
     // (e.g., if the color attachment is memoryless) we need to copy the contents of
     // the resolve attachment to the MSAA attachment at this point.
+    fActiveRenderCmdEncoder = this->setupResolve();
+
+    if (!fActiveRenderCmdEncoder) {
+        // If setting up for the resolve didn't create an encoder, it's probably reasonable to
+        // create a new encoder at this point, though maybe not necessary.
+        fActiveRenderCmdEncoder =
+                fGpu->commandBuffer()->getRenderCommandEncoder(fRenderPassDesc, nullptr, this);
+    }
 }
 
 void GrMtlOpsRenderPass::initRenderState(GrMtlRenderCommandEncoder* encoder) {
@@ -244,7 +253,7 @@ void GrMtlOpsRenderPass::setupRenderPass(
 
     fRenderPassDesc = [MTLRenderPassDescriptor new];
     auto colorAttachment = fRenderPassDesc.colorAttachments[0];
-    auto* color = fFramebuffer->colorAttachment();
+    auto color = fFramebuffer->colorAttachment();
     colorAttachment.texture = color->mtlTexture();
     const std::array<float, 4>& clearColor = colorInfo.fClearColor;
     colorAttachment.clearColor =
@@ -252,22 +261,7 @@ void GrMtlOpsRenderPass::setupRenderPass(
     colorAttachment.loadAction = mtlLoadAction[static_cast<int>(colorInfo.fLoadOp)];
     colorAttachment.storeAction = mtlStoreAction[static_cast<int>(colorInfo.fStoreOp)];
 
-    if (@available(macOS 10.12, iOS 10.0, tvOS 10.0, *)) {
-        // For the moment we won't do any of this if MTLStoreActionStoreAndMultisampleResolve
-        // isn't available. Once we can copy the resolve back to MSAA then we'll have another
-        // path to manage the store (or more accurately, the following load).
-        auto* resolve = fFramebuffer->resolveAttachment();
-        if (resolve) {
-            colorAttachment.resolveTexture = resolve->mtlTexture();
-            if (colorInfo.fStoreOp == GrStoreOp::kStore) {
-                colorAttachment.storeAction = MTLStoreActionStoreAndMultisampleResolve;
-            } else {
-                colorAttachment.storeAction = MTLStoreActionMultisampleResolve;
-            }
-        }
-    }
-
-    auto* stencil = fFramebuffer->stencilAttachment();
+    auto stencil = fFramebuffer->stencilAttachment();
     auto mtlStencil = fRenderPassDesc.stencilAttachment;
     if (stencil) {
         mtlStencil.texture = stencil->mtlTexture();
@@ -276,20 +270,45 @@ void GrMtlOpsRenderPass::setupRenderPass(
     mtlStencil.loadAction = mtlLoadAction[static_cast<int>(stencilInfo.fLoadOp)];
     mtlStencil.storeAction = mtlStoreAction[static_cast<int>(stencilInfo.fStoreOp)];
 
-    // Manage initial clears
-    if (colorInfo.fLoadOp == GrLoadOp::kClear || stencilInfo.fLoadOp == GrLoadOp::kClear)  {
-        fBounds = SkRect::MakeWH(color->dimensions().width(),
-                                 color->dimensions().height());
-        fActiveRenderCmdEncoder =
-                fGpu->commandBuffer()->getRenderCommandEncoder(fRenderPassDesc, nullptr, this);
-    } else {
-        fBounds.setEmpty();
-        // For now, we lazily create the renderCommandEncoder because we may have no draws,
-        // and an empty renderCommandEncoder can still produce output. This can cause issues
-        // when we've cleared a texture upon creation -- we'll subsequently discard the contents.
-        // This can be removed when that ordering is fixed.
-        fActiveRenderCmdEncoder = nil;
+    fActiveRenderCmdEncoder = this->setupResolve();
+
+    if (!fActiveRenderCmdEncoder) {
+        // Manage initial clears
+        if (colorInfo.fLoadOp == GrLoadOp::kClear || stencilInfo.fLoadOp == GrLoadOp::kClear)  {
+            fBounds = SkRect::MakeWH(color->dimensions().width(),
+                                     color->dimensions().height());
+            fActiveRenderCmdEncoder =
+                    fGpu->commandBuffer()->getRenderCommandEncoder(fRenderPassDesc, nullptr, this);
+        } else {
+            fBounds.setEmpty();
+            // For now, we lazily create the renderCommandEncoder because we may have no draws,
+            // and an empty renderCommandEncoder can still produce output. This can cause issues
+            // when we've cleared a texture upon creation -- we'll subsequently discard the contents.
+            // This can be removed when that ordering is fixed.
+        }
     }
+}
+
+GrMtlRenderCommandEncoder* GrMtlOpsRenderPass::setupResolve() {
+    auto resolve = fFramebuffer->resolveAttachment();
+    if (resolve) {
+        auto colorAttachment = fRenderPassDesc.colorAttachments[0];
+        colorAttachment.resolveTexture = resolve->mtlTexture();
+        // TODO: For framebufferOnly attachments we should do StoreAndMultisampleResolve if
+        // the storeAction is Store. But for the moment they don't take this path.
+        colorAttachment.storeAction = MTLStoreActionMultisampleResolve;
+        if (colorAttachment.loadAction == MTLLoadActionLoad) {
+            auto color = fFramebuffer->colorAttachment();
+            auto dimensions = color->dimensions();
+            // for now use the full bounds
+            auto nativeBounds = GrNativeRect::MakeIRectRelativeTo(
+                    fOrigin, dimensions.height(), SkIRect::MakeSize(dimensions));
+            return fGpu->loadMSAAFromResolve(color, resolve, nativeBounds,
+                                             fRenderPassDesc.stencilAttachment);
+        }
+    }
+
+    return nil;
 }
 
 void GrMtlOpsRenderPass::onBindBuffers(sk_sp<const GrBuffer> indexBuffer,

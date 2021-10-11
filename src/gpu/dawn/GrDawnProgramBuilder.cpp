@@ -350,7 +350,7 @@ sk_sp<GrDawnProgram> GrDawnProgramBuilder::Build(GrDawnGpu* gpu,
         }
         wgpu::VertexBufferLayout input;
         input.arrayStride = offset;
-        input.stepMode = wgpu::InputStepMode::Vertex;
+        input.stepMode = wgpu::VertexStepMode::Vertex;
         input.attributeCount = vertexAttributes.size();
         input.attributes = &vertexAttributes.front();
         inputs.push_back(input);
@@ -369,7 +369,7 @@ sk_sp<GrDawnProgram> GrDawnProgramBuilder::Build(GrDawnGpu* gpu,
         }
         wgpu::VertexBufferLayout input;
         input.arrayStride = offset;
-        input.stepMode = wgpu::InputStepMode::Instance;
+        input.stepMode = wgpu::VertexStepMode::Instance;
         input.attributeCount = instanceAttributes.size();
         input.attributes = &instanceAttributes.front();
         inputs.push_back(input);
@@ -483,8 +483,11 @@ static void set_texture(GrDawnGpu* gpu, GrSamplerState state, GrTexture* texture
     bindings->push_back(make_bind_group_entry((*binding)++, sampler));
     GrDawnTexture* tex = static_cast<GrDawnTexture*>(texture);
     wgpu::TextureViewDescriptor viewDesc;
-    // Note that a mipLevelCount of zero here means to expose all available levels.
-    viewDesc.mipLevelCount = GrSamplerState::MipmapMode::kNone == state.mipmapMode() ? 1 : 0;
+    // Note that a mipLevelCount == WGPU_MIP_LEVEL_COUNT_UNDEFINED here means to expose all
+    // available levels.
+    viewDesc.mipLevelCount = GrSamplerState::MipmapMode::kNone == state.mipmapMode()
+                                     ? 1
+                                     : WGPU_MIP_LEVEL_COUNT_UNDEFINED;
     wgpu::TextureView textureView = tex->texture().CreateView(&viewDesc);
     bindings->push_back(make_bind_group_entry((*binding)++, textureView));
 }

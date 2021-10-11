@@ -17,6 +17,12 @@
 #include <cstdint>
 #include <memory>
 
+#if defined(__has_cpp_attribute) && __has_cpp_attribute(clang::reinitializes)
+#define SK_CLANG_REINITIALIZES [[clang::reinitializes]]
+#else
+#define SK_CLANG_REINITIALIZES
+#endif
+
 namespace SkSL {
 
 class Expression;
@@ -122,6 +128,9 @@ public:
     DSLPossibleExpression operator()(SkTArray<DSLWrapper<DSLExpression>> args,
                                      PositionInfo pos = PositionInfo::Capture());
 
+    DSLPossibleExpression operator()(ExpressionArray args,
+                                     PositionInfo pos = PositionInfo::Capture());
+
     /**
      * Returns true if this object contains an expression. DSLExpressions which were created with
      * the empty constructor or which have already been release()ed do not have a value.
@@ -136,7 +145,7 @@ public:
      */
     bool isValid() const;
 
-    void swap(DSLExpression& other);
+    SK_CLANG_REINITIALIZES void swap(DSLExpression& other);
 
     /**
      * Invalidates this object and returns the SkSL expression it represents. It is an error to call
@@ -267,6 +276,9 @@ public:
     DSLPossibleExpression operator[](DSLExpression index);
 
     DSLPossibleExpression operator()(SkTArray<DSLWrapper<DSLExpression>> args,
+                                     PositionInfo pos = PositionInfo::Capture());
+
+    DSLPossibleExpression operator()(ExpressionArray args,
                                      PositionInfo pos = PositionInfo::Capture());
 
     DSLPossibleExpression operator++();

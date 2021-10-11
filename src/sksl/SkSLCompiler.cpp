@@ -28,7 +28,7 @@
 #include "src/sksl/ir/SkSLExpression.h"
 #include "src/sksl/ir/SkSLExpressionStatement.h"
 #include "src/sksl/ir/SkSLFunctionCall.h"
-#include "src/sksl/ir/SkSLIntLiteral.h"
+#include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLModifiersDeclaration.h"
 #include "src/sksl/ir/SkSLNop.h"
 #include "src/sksl/ir/SkSLSymbolTable.h"
@@ -124,7 +124,7 @@ public:
 
 Compiler::Compiler(const ShaderCapsClass* caps)
         : fErrorReporter(this)
-        , fContext(std::make_shared<Context>(fErrorReporter, *caps))
+        , fContext(std::make_shared<Context>(fErrorReporter, *caps, fMangler))
         , fInliner(fContext.get()) {
     SkASSERT(caps);
     fRootModule.fSymbols = this->makeRootSymbolTable();
@@ -503,7 +503,7 @@ bool Compiler::optimize(LoadedModule& module) {
 
     while (this->errorCount() == 0) {
         // Perform inline-candidate analysis and inline any functions deemed suitable.
-        if (!fInliner.analyze(module.fElements, module.fSymbols, usage.get())) {
+        if (!this->runInliner(module.fElements, module.fSymbols, usage.get())) {
             break;
         }
     }
@@ -789,7 +789,10 @@ bool Compiler::optimize(Program& program) {
     if (this->errorCount() == 0) {
         // Run the inliner only once; it is expensive! Multiple passes can occasionally shake out
         // more wins, but it's diminishing returns.
-        fInliner.analyze(program.ownedElements(), program.fSymbols, usage);
+        this->runInliner(program.ownedElements(), program.fSymbols, usage);
+
+        // Unreachable code can confuse some drivers, so it's worth removing. (skia:12012)
+        this->removeUnreachableCode(program, usage);
 
         while (this->removeDeadFunctions(program, usage)) {
             // Removing dead functions may cause more functions to become unreferenced. Try again.
@@ -797,8 +800,6 @@ bool Compiler::optimize(Program& program) {
         while (this->removeDeadLocalVariables(program, usage)) {
             // Removing dead variables may cause more variables to become unreferenced. Try again.
         }
-        // Unreachable code can confuse some drivers, so it's worth removing. (skia:12012)
-        this->removeUnreachableCode(program, usage);
 
         this->removeDeadGlobalVariables(program, usage);
     }
@@ -806,21 +807,40 @@ bool Compiler::optimize(Program& program) {
     return this->errorCount() == 0;
 }
 
+bool Compiler::runInliner(const std::vector<std::unique_ptr<ProgramElement>>& elements,
+                          std::shared_ptr<SymbolTable> symbols,
+                          ProgramUsage* usage) {
+    // The program's SymbolTable was taken out of the IRGenerator when the program was bundled, but
+    // the inliner relies (indirectly) on having a valid SymbolTable in the IRGenerator.
+    // In particular, inlining can turn a non-optimizable expression like `normalize(myVec)` into
+    // `normalize(vec2(7))`, which is now optimizable. The optimizer can use DSL to simplify this
+    // expression--e.g., in the case of normalize, using DSL's Length(). The DSL relies on
+    // irGenerator.convertIdentifier() to look up `length`. convertIdentifier() needs a valid symbol
+    // table to find the declaration of `length`. To allow this chain of events to succeed, we
+    // re-insert the program's symbol table back into the IRGenerator temporarily.
+    SkASSERT(!fIRGenerator->fSymbolTable);
+    fIRGenerator->fSymbolTable = symbols;
+
+    bool result = fInliner.analyze(elements, symbols, usage);
+
+    fIRGenerator->fSymbolTable = nullptr;
+    return result;
+}
+
 bool Compiler::finalize(Program& program) {
     // Do a pass looking for @if/@switch statements that didn't optimize away, or dangling
     // FunctionReference or TypeReference expressions. Report these as errors.
     Analysis::VerifyStaticTestsAndExpressions(program);
 
-    // If we're in ES2 mode (runtime effects), do a pass to enforce Appendix A, Section 5 of the
-    // GLSL ES 1.00 spec -- Indexing. Don't bother if we've already found errors - this logic
-    // assumes that all loops meet the criteria of Section 4, and if they don't, could crash.
+    // Verify that the program conforms to ES2 limitations.
     if (fContext->fConfig->strictES2Mode() && this->errorCount() == 0) {
+        // Enforce Appendix A, Section 5 of the GLSL ES 1.00 spec -- Indexing. This logic assumes
+        // that all loops meet the criteria of Section 4, and if they don't, could crash.
         for (const auto& pe : program.ownedElements()) {
             Analysis::ValidateIndexingForES2(*pe, this->errorReporter());
         }
-    }
-
-    if (fContext->fConfig->strictES2Mode()) {
+        // Verify that the program size is reasonable after unrolling and inlining. This also
+        // issues errors for static recursion and overly-deep function-call chains.
         Analysis::CheckProgramUnrolledSize(program);
     }
 
@@ -865,6 +885,7 @@ bool Compiler::toSPIRV(Program& program, OutputStream& out) {
                 errors.append(disassembly);
             }
             this->errorReporter().error(-1, errors);
+            this->errorReporter().reportPendingErrors(PositionInfo());
 #else
             SkDEBUGFAILF("%s", errors.c_str());
 #endif
@@ -933,12 +954,11 @@ bool Compiler::toMetal(Program& program, String* out) {
 
 #endif // defined(SKSL_STANDALONE) || SK_SUPPORT_GPU
 
-void Compiler::handleError(const char* msg, PositionInfo pos) {
+void Compiler::handleError(skstd::string_view msg, PositionInfo pos) {
     fErrorText += "error: " + (pos.line() >= 1 ? to_string(pos.line()) + ": " : "") + msg + "\n";
 }
 
 String Compiler::errorText(bool showCount) {
-    this->errorReporter().reportPendingErrors(PositionInfo());
     if (showCount) {
         this->writeErrorCount();
     }

@@ -65,13 +65,12 @@ SkRasterClip::SkRasterClip() {
 }
 
 SkRasterClip::SkRasterClip(const SkPath& path, const SkIRect& bounds, bool doAA) {
-    SkRegion clip(bounds);
     if (doAA) {
         fIsBW = false;
-        fAA.setPath(path, &clip, true);
+        fAA.setPath(path, bounds, true);
     } else {
         fIsBW = true;
-        fBW.setPath(path, clip);
+        fBW.setPath(path, SkRegion(bounds));
     }
     fIsEmpty = this->computeIsEmpty();  // bounds might be empty, so compute
     fIsRect = this->computeIsRect();
@@ -80,20 +79,6 @@ SkRasterClip::SkRasterClip(const SkPath& path, const SkIRect& bounds, bool doAA)
 
 SkRasterClip::~SkRasterClip() {
     SkDEBUGCODE(this->validate();)
-}
-
-bool SkRasterClip::operator==(const SkRasterClip& other) const {
-    if (fIsBW != other.fIsBW) {
-        return false;
-    }
-    bool isEqual = fIsBW ? fBW == other.fBW : fAA == other.fAA;
-#ifdef SK_DEBUG
-    if (isEqual) {
-        SkASSERT(fIsEmpty == other.fIsEmpty);
-        SkASSERT(fIsRect == other.fIsRect);
-    }
-#endif
-    return isEqual;
 }
 
 bool SkRasterClip::setEmpty() {
@@ -125,7 +110,7 @@ bool SkRasterClip::op(const SkIRect& rect, SkClipOp op) {
     if (fIsBW) {
         fBW.op(rect, (SkRegion::Op) op);
     } else {
-        fAA.op(rect, (SkRegion::Op) op);
+        fAA.op(rect, op);
     }
     return this->updateCacheAndReturnNonEmpty();
 }
@@ -138,7 +123,7 @@ bool SkRasterClip::op(const SkRegion& rgn, SkClipOp op) {
     } else {
         SkAAClip tmp;
         tmp.setRegion(rgn);
-        (void)fAA.op(tmp, (SkRegion::Op) op);
+        (void)fAA.op(tmp, op);
     }
     return this->updateCacheAndReturnNonEmpty();
 }
@@ -161,9 +146,7 @@ bool SkRasterClip::op(const SkRect& localRect, const SkMatrix& matrix, SkClipOp 
 
     const bool isScaleTrans = matrix.isScaleTranslate();
     if (!isScaleTrans) {
-        SkPath path = SkPath::Rect(localRect);
-        path.setIsVolatile(true);
-        return this->op(path, matrix, op, doAA);
+        return this->op(SkPath::Rect(localRect), matrix, op, doAA);
     }
 
     SkRect devRect = matrix.mapRect(localRect);
@@ -182,7 +165,7 @@ bool SkRasterClip::op(const SkRect& localRect, const SkMatrix& matrix, SkClipOp 
         if (fIsBW) {
             this->convertToAA();
         }
-        (void)fAA.op(devRect, (SkRegion::Op) op, doAA);
+        (void)fAA.op(devRect, op, doAA);
     }
     return this->updateCacheAndReturnNonEmpty();
 }
@@ -194,19 +177,27 @@ bool SkRasterClip::op(const SkRRect& rrect, const SkMatrix& matrix, SkClipOp op,
 bool SkRasterClip::op(const SkPath& path, const SkMatrix& matrix, SkClipOp op, bool doAA) {
     AUTO_RASTERCLIP_VALIDATE(*this);
 
-    // Transform into device space
     SkPath devPath;
-    if (matrix.isIdentity()) {
-        devPath = path;
-    } else {
-        path.transform(matrix, &devPath);
-        devPath.setIsVolatile(true);
-    }
+    path.transform(matrix, &devPath);
 
     // Since op is either intersect or difference, the clip is always shrinking; that means we can
-    // always use our current bounds as the limiting factor for region/aaclip operations
-    SkRasterClip clip(devPath, this->getBounds(), doAA);
-    return this->op(clip, op);
+    // always use our current bounds as the limiting factor for region/aaclip operations.
+    if (this->isRect() && op == SkClipOp::kIntersect) {
+        // However, in the relatively common case of intersecting a new path with a rectangular
+        // clip, it's faster to convert the path into a region/aa-mask in place than evaluate the
+        // actual intersection. See skbug.com/12398
+        if (doAA && fIsBW) {
+            this->convertToAA();
+        }
+        if (fIsBW) {
+            fBW.setPath(devPath, SkRegion(this->getBounds()));
+        } else {
+            fAA.setPath(devPath, this->getBounds(), doAA);
+        }
+        return this->updateCacheAndReturnNonEmpty();
+    } else {
+        return this->op(SkRasterClip(devPath, this->getBounds(), doAA), op);
+    }
 }
 
 bool SkRasterClip::op(sk_sp<SkShader> sh) {
@@ -239,7 +230,7 @@ bool SkRasterClip::op(const SkRasterClip& clip, SkClipOp op) {
         } else {
             other = &clip.aaRgn();
         }
-        (void)fAA.op(*other, (SkRegion::Op) op);
+        (void)fAA.op(*other, op);
     }
     return this->updateCacheAndReturnNonEmpty();
 }

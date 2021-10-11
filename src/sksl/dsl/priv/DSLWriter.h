@@ -190,6 +190,13 @@ public:
     }
 #endif // !defined(SKSL_STANDALONE) && SK_SUPPORT_GPU
 
+    /**
+     * Adds a new declaration into an existing declaration statement. This either turns the original
+     * declaration into an unscoped block or, if it already was, appends a new statement to the end
+     * of it.
+     */
+    static void AddVarDeclaration(DSLStatement& existing, DSLVar& additional);
+
     static std::unique_ptr<SkSL::Expression> Call(const FunctionDeclaration& function,
                                                   ExpressionArray arguments,
                                                   PositionInfo pos = PositionInfo::Capture());
@@ -222,7 +229,8 @@ public:
     static DSLPossibleStatement ConvertSwitch(std::unique_ptr<Expression> value,
                                               ExpressionArray caseValues,
                                               SkTArray<SkSL::StatementArray> caseStatements,
-                                              bool isStatic);
+                                              bool isStatic,
+                                              PositionInfo pos);
 
     /**
      * Returns the ErrorReporter associated with the current thread. This object will be notified
@@ -238,7 +246,7 @@ public:
      * Notifies the current ErrorReporter that a DSL error has occurred. The default error handler
      * prints the message to stderr and aborts.
      */
-    static void ReportError(const char* msg, PositionInfo info = PositionInfo::Capture());
+    static void ReportError(skstd::string_view msg, PositionInfo info = PositionInfo::Capture());
 
     /**
      * Returns whether name mangling is enabled. Mangling is important for the DSL because its
@@ -281,7 +289,7 @@ public:
 
 private:
     class DefaultErrorReporter : public ErrorReporter {
-        void handleError(const char* msg, PositionInfo pos) override;
+        void handleError(skstd::string_view msg, PositionInfo pos) override;
     };
 
     std::unique_ptr<SkSL::ProgramConfig> fConfig;

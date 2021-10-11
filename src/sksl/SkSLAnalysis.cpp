@@ -7,6 +7,7 @@
 
 #include "src/sksl/SkSLAnalysis.h"
 
+#include "include/private/SkFloatingPoint.h"
 #include "include/private/SkSLModifiers.h"
 #include "include/private/SkSLProgramElement.h"
 #include "include/private/SkSLSampleUsage.h"
@@ -38,7 +39,6 @@
 
 // Expressions
 #include "src/sksl/ir/SkSLBinaryExpression.h"
-#include "src/sksl/ir/SkSLBoolLiteral.h"
 #include "src/sksl/ir/SkSLChildCall.h"
 #include "src/sksl/ir/SkSLConstructor.h"
 #include "src/sksl/ir/SkSLConstructorDiagonalMatrix.h"
@@ -46,12 +46,11 @@
 #include "src/sksl/ir/SkSLExternalFunctionCall.h"
 #include "src/sksl/ir/SkSLExternalFunctionReference.h"
 #include "src/sksl/ir/SkSLFieldAccess.h"
-#include "src/sksl/ir/SkSLFloatLiteral.h"
 #include "src/sksl/ir/SkSLFunctionCall.h"
 #include "src/sksl/ir/SkSLFunctionReference.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
 #include "src/sksl/ir/SkSLInlineMarker.h"
-#include "src/sksl/ir/SkSLIntLiteral.h"
+#include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
 #include "src/sksl/ir/SkSLSetting.h"
@@ -290,7 +289,7 @@ private:
 class TrivialErrorReporter : public ErrorReporter {
 public:
     ~TrivialErrorReporter() override { this->reportPendingErrors({}); }
-    void handleError(const char*, PositionInfo) override {}
+    void handleError(skstd::string_view, PositionInfo) override {}
 };
 
 // This isn't actually using ProgramVisitor, because it only considers a subset of the fields for
@@ -614,11 +613,11 @@ bool Analysis::CheckProgramUnrolledSize(const Program& program) {
     // If we decide that expressions are cheaper than statements, or that certain statements are
     // more expensive than others, etc., we can always tweak these ratios as needed. A very rough
     // ballpark estimate is currently good enough for our purposes.
-    static constexpr int kExpressionCost = 1;
-    static constexpr int kStatementCost = 1;
-    static constexpr int kUnknownCost = -1;
-    static constexpr int kProgramSizeLimit = 100000;
-    static constexpr int kProgramStackDepthLimit = 50;
+    static constexpr size_t kExpressionCost = 1;
+    static constexpr size_t kStatementCost = 1;
+    static constexpr size_t kUnknownCost = -1;
+    static constexpr size_t kProgramSizeLimit = 100000;
+    static constexpr size_t kProgramStackDepthLimit = 50;
 
     class ProgramSizeVisitor : public ProgramVisitor {
     public:
@@ -626,7 +625,7 @@ bool Analysis::CheckProgramUnrolledSize(const Program& program) {
 
         using ProgramVisitor::visitProgramElement;
 
-        int functionSize() const {
+        size_t functionSize() const {
             return fFunctionSize;
         }
 
@@ -674,7 +673,6 @@ bool Analysis::CheckProgramUnrolledSize(const Program& program) {
                 // Calculate the function cost and store it in our cache.
                 fStack.push_back(decl);
                 fFunctionSize = 0;
-                fUnrollFactor = 1;
                 bool result = INHERITED::visitProgramElement(pe);
                 iter->second = fFunctionSize;
                 fStack.pop_back();
@@ -693,20 +691,21 @@ bool Analysis::CheckProgramUnrolledSize(const Program& program) {
                     // output for every iteration of the loop. The test-expr is optimized away
                     // during the unroll and is not counted at all.
                     const ForStatement& forStmt = stmt.as<ForStatement>();
-                    bool result = INHERITED::visitStatement(*forStmt.initializer());
+                    bool result = this->visitStatement(*forStmt.initializer());
 
-                    int originalUnrollFactor = fUnrollFactor;
+                    size_t originalFunctionSize = fFunctionSize;
+                    fFunctionSize = 0;
+
+                    result = this->visitExpression(*forStmt.next()) ||
+                             this->visitStatement(*forStmt.statement()) || result;
 
                     if (const LoopUnrollInfo* unrollInfo = forStmt.unrollInfo()) {
-                        fUnrollFactor = SkSafeMath::Mul(fUnrollFactor, unrollInfo->fCount);
+                        fFunctionSize = SkSafeMath::Mul(fFunctionSize, unrollInfo->fCount);
                     } else {
                         SkDEBUGFAIL("for-loops should always have unroll info in an ES2 program");
                     }
 
-                    result = INHERITED::visitExpression(*forStmt.next()) ||
-                             INHERITED::visitStatement(*forStmt.statement()) || result;
-
-                    fUnrollFactor = originalUnrollFactor;
+                    fFunctionSize = SkSafeMath::Add(fFunctionSize, originalFunctionSize);
                     return result;
                 }
 
@@ -728,17 +727,18 @@ bool Analysis::CheckProgramUnrolledSize(const Program& program) {
                     break;
 
                 default:
-                    fFunctionSize += fUnrollFactor * kStatementCost;
+                    fFunctionSize = SkSafeMath::Add(fFunctionSize, kStatementCost);
                     break;
             }
 
-            return INHERITED::visitStatement(stmt);
+            bool earlyExit = fFunctionSize > kProgramSizeLimit;
+            return earlyExit || INHERITED::visitStatement(stmt);
         }
 
         bool visitExpression(const Expression& expr) override {
             // Other than function calls, all expressions are assumed to have a fixed unit cost.
             bool earlyExit = false;
-            int expressionCost = kExpressionCost;
+            size_t expressionCost = kExpressionCost;
 
             if (expr.is<FunctionCall>()) {
                 // Visit this function call to calculate its size. If we've already sized it, this
@@ -746,28 +746,26 @@ bool Analysis::CheckProgramUnrolledSize(const Program& program) {
                 const FunctionCall& call = expr.as<FunctionCall>();
                 const FunctionDeclaration* decl = &call.function();
                 if (decl->definition() && !decl->isIntrinsic()) {
-                    int originalFunctionSize = fFunctionSize;
-                    int originalUnrollFactor = fUnrollFactor;
+                    size_t originalFunctionSize = fFunctionSize;
+                    fFunctionSize = 0;
 
                     earlyExit = this->visitProgramElement(*decl->definition());
                     expressionCost = fFunctionSize;
 
                     fFunctionSize = originalFunctionSize;
-                    fUnrollFactor = originalUnrollFactor;
                 }
             }
 
-            fFunctionSize += fUnrollFactor * expressionCost;
+            fFunctionSize = SkSafeMath::Add(fFunctionSize, expressionCost);
             return earlyExit || INHERITED::visitExpression(expr);
         }
 
     private:
         using INHERITED = ProgramVisitor;
 
-        [[maybe_unused]] const Context& fContext;
-        int fFunctionSize;
-        int fUnrollFactor;
-        std::unordered_map<const FunctionDeclaration*, int> fFunctionCostMap;
+        const Context& fContext;
+        size_t fFunctionSize = 0;
+        std::unordered_map<const FunctionDeclaration*, size_t> fFunctionCostMap;
         std::vector<const FunctionDeclaration*> fStack;
     };
 
@@ -930,9 +928,7 @@ bool Analysis::UpdateVariableRefKind(Expression* expr,
 }
 
 bool Analysis::IsTrivialExpression(const Expression& expr) {
-    return expr.is<IntLiteral>() ||
-           expr.is<FloatLiteral>() ||
-           expr.is<BoolLiteral>() ||
+    return expr.is<Literal>() ||
            expr.is<VariableReference>() ||
            (expr.is<Swizzle>() &&
             IsTrivialExpression(*expr.as<Swizzle>().base())) ||
@@ -944,7 +940,7 @@ bool Analysis::IsTrivialExpression(const Expression& expr) {
            (expr.isAnyConstructor() &&
             expr.isConstantOrUniform()) ||
            (expr.is<IndexExpression>() &&
-            expr.as<IndexExpression>().index()->is<IntLiteral>() &&
+            expr.as<IndexExpression>().index()->isIntLiteral() &&
             IsTrivialExpression(*expr.as<IndexExpression>().base()));
 }
 
@@ -958,14 +954,8 @@ bool Analysis::IsSameExpressionTree(const Expression& left, const Expression& ri
     // Since this is intended to be used for optimization purposes, handling the common cases is
     // sufficient.
     switch (left.kind()) {
-        case Expression::Kind::kIntLiteral:
-            return left.as<IntLiteral>().value() == right.as<IntLiteral>().value();
-
-        case Expression::Kind::kFloatLiteral:
-            return left.as<FloatLiteral>().value() == right.as<FloatLiteral>().value();
-
-        case Expression::Kind::kBoolLiteral:
-            return left.as<BoolLiteral>().value() == right.as<BoolLiteral>().value();
+        case Expression::Kind::kLiteral:
+            return left.as<Literal>().value() == right.as<Literal>().value();
 
         case Expression::Kind::kConstructorArray:
         case Expression::Kind::kConstructorArrayCast:
@@ -1022,12 +1012,8 @@ static bool get_constant_value(const Expression& expr, double* val) {
     if (!valExpr) {
         return false;
     }
-    if (valExpr->is<IntLiteral>()) {
-        *val = static_cast<double>(valExpr->as<IntLiteral>().value());
-        return true;
-    }
-    if (valExpr->is<FloatLiteral>()) {
-        *val = static_cast<double>(valExpr->as<FloatLiteral>().value());
+    if (valExpr->is<Literal>()) {
+        *val = valExpr->as<Literal>().value();
         return true;
     }
     SkDEBUGFAILF("unexpected constant type (%s)", expr.type().description().c_str());
@@ -1165,30 +1151,83 @@ static const char* invalid_for_ES2(int offset,
     }
 
     // Finally, compute the iteration count, based on the bounds, and the termination operator.
-    constexpr int kMaxUnrollableLoopLength = 128;
+    static constexpr int kLoopTerminationLimit = 100000;
     loopInfo.fCount = 0;
 
-    double val = loopInfo.fStart;
-    auto evalCond = [&]() {
-        switch (cond.getOperator().kind()) {
-            case Token::Kind::TK_GT:   return val >  loopEnd;
-            case Token::Kind::TK_GTEQ: return val >= loopEnd;
-            case Token::Kind::TK_LT:   return val <  loopEnd;
-            case Token::Kind::TK_LTEQ: return val <= loopEnd;
-            case Token::Kind::TK_EQEQ: return val == loopEnd;
-            case Token::Kind::TK_NEQ:  return val != loopEnd;
-            default: SkUNREACHABLE;
+    auto calculateCount = [](double start, double end, double delta,
+                             bool forwards, bool inclusive) -> int {
+        if (forwards != (start < end)) {
+            // The loop starts in a completed state (the start has already advanced past the end).
+            return 0;
         }
+        if ((delta == 0.0) || forwards != (delta > 0.0)) {
+            // The loop does not progress toward a completed state, and will never terminate.
+            return kLoopTerminationLimit;
+        }
+        double iterations = sk_ieee_double_divide(end - start, delta);
+        double count = std::ceil(iterations);
+        if (inclusive && (count == iterations)) {
+            count += 1.0;
+        }
+        if (count > kLoopTerminationLimit || !std::isfinite(count)) {
+            // The loop runs for more iterations than we can safely unroll.
+            return kLoopTerminationLimit;
+        }
+        return (int)count;
     };
 
-    for (loopInfo.fCount = 0; loopInfo.fCount <= kMaxUnrollableLoopLength; ++loopInfo.fCount) {
-        if (!evalCond()) {
+    switch (cond.getOperator().kind()) {
+        case Token::Kind::TK_LT:
+            loopInfo.fCount = calculateCount(loopInfo.fStart, loopEnd, loopInfo.fDelta,
+                                             /*forwards=*/true, /*inclusive=*/false);
+            break;
+
+        case Token::Kind::TK_GT:
+            loopInfo.fCount = calculateCount(loopInfo.fStart, loopEnd, loopInfo.fDelta,
+                                             /*forwards=*/false, /*inclusive=*/false);
+            break;
+
+        case Token::Kind::TK_LTEQ:
+            loopInfo.fCount = calculateCount(loopInfo.fStart, loopEnd, loopInfo.fDelta,
+                                             /*forwards=*/true, /*inclusive=*/true);
+            break;
+
+        case Token::Kind::TK_GTEQ:
+            loopInfo.fCount = calculateCount(loopInfo.fStart, loopEnd, loopInfo.fDelta,
+                                             /*forwards=*/false, /*inclusive=*/true);
+            break;
+
+        case Token::Kind::TK_NEQ: {
+            float iterations = sk_ieee_double_divide(loopEnd - loopInfo.fStart, loopInfo.fDelta);
+            loopInfo.fCount = std::ceil(iterations);
+            if (loopInfo.fCount < 0 || loopInfo.fCount != iterations ||
+                !std::isfinite(iterations)) {
+                // The loop doesn't reach the exact endpoint and so will never terminate.
+                loopInfo.fCount = kLoopTerminationLimit;
+            }
             break;
         }
-        val += loopInfo.fDelta;
+        case Token::Kind::TK_EQEQ: {
+            if (loopInfo.fStart == loopEnd) {
+                // Start and end begin in the same place, so we can run one iteration...
+                if (loopInfo.fDelta) {
+                    // ... and then they diverge, so the loop terminates.
+                    loopInfo.fCount = 1;
+                } else {
+                    // ... but they never diverge, so the loop runs forever.
+                    loopInfo.fCount = kLoopTerminationLimit;
+                }
+            } else {
+                // Start never equals end, so the loop will not run a single iteration.
+                loopInfo.fCount = 0;
+            }
+            break;
+        }
+        default: SkUNREACHABLE;
     }
 
-    if (loopInfo.fCount > kMaxUnrollableLoopLength) {
+    SkASSERT(loopInfo.fCount >= 0);
+    if (loopInfo.fCount >= kLoopTerminationLimit) {
         return "loop must guarantee termination in fewer iterations";
     }
 
@@ -1223,9 +1262,7 @@ public:
         // A constant-(index)-expression is one of...
         switch (e.kind()) {
             // ... a literal value
-            case Expression::Kind::kBoolLiteral:
-            case Expression::Kind::kIntLiteral:
-            case Expression::Kind::kFloatLiteral:
+            case Expression::Kind::kLiteral:
                 return false;
 
             // ... settings can appear in fragment processors; they will resolve when compiled
@@ -1276,6 +1313,7 @@ public:
             case Expression::Kind::kPoison:
             case Expression::Kind::kFunctionReference:
             case Expression::Kind::kExternalFunctionReference:
+            case Expression::Kind::kMethodReference:
             case Expression::Kind::kTypeReference:
             case Expression::Kind::kCodeString:
                 return true;
@@ -1392,6 +1430,7 @@ void Analysis::VerifyStaticTestsAndExpressions(const Program& program) {
                 }
                 case Expression::Kind::kExternalFunctionReference:
                 case Expression::Kind::kFunctionReference:
+                case Expression::Kind::kMethodReference:
                 case Expression::Kind::kTypeReference:
                     SkDEBUGFAIL("invalid reference-expr, should have been reported by coerce()");
                     fContext.fErrors->error(expr.fOffset, "invalid expression");
@@ -1431,11 +1470,10 @@ bool ProgramVisitor::visit(const Program& program) {
 
 template <typename T> bool TProgramVisitor<T>::visitExpression(typename T::Expression& e) {
     switch (e.kind()) {
-        case Expression::Kind::kBoolLiteral:
         case Expression::Kind::kExternalFunctionReference:
-        case Expression::Kind::kFloatLiteral:
         case Expression::Kind::kFunctionReference:
-        case Expression::Kind::kIntLiteral:
+        case Expression::Kind::kLiteral:
+        case Expression::Kind::kMethodReference:
         case Expression::Kind::kPoison:
         case Expression::Kind::kSetting:
         case Expression::Kind::kTypeReference:

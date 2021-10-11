@@ -37,6 +37,11 @@
 
 GR_NORETAIN_BEGIN
 
+#if GR_TEST_UTILS
+// set to 1 if you want to do GPU capture of each commandBuffer
+#define GR_METAL_CAPTURE_COMMANDBUFFER 0
+#endif
+
 sk_sp<GrGpu> GrMtlGpu::Make(const GrMtlBackendContext& context, const GrContextOptions& options,
                             GrDirectContext* direct) {
     if (!context.fDevice || !context.fQueue) {
@@ -78,6 +83,9 @@ GrMtlGpu::GrMtlGpu(GrDirectContext* direct, const GrContextOptions& options,
         , fDisconnected(false) {
     fMtlCaps.reset(new GrMtlCaps(options, fDevice));
     this->initCapsAndCompiler(fMtlCaps);
+#if GR_METAL_CAPTURE_COMMANDBUFFER
+    this->testingOnly_startCapture();
+#endif
     fCurrentCmdBuffer = GrMtlCommandBuffer::Make(fQueue);
 #if GR_METAL_SDK_VERSION >= 230
     if (@available(macOS 11.0, iOS 14.0, *)) {
@@ -111,6 +119,8 @@ sk_sp<GrThreadSafePipelineBuilder> GrMtlGpu::refPipelineBuilder() {
 
 void GrMtlGpu::destroyResources() {
     this->submitCommandBuffer(SyncQueue::kForce_SyncQueue);
+    // if there's no work we won't release the command buffer, so we do it here
+    fCurrentCmdBuffer = nil;
 
     // We used a placement new for each object in fOutstandingCommandBuffers, so we're responsible
     // for calling the destructor on each of them as well.
@@ -141,15 +151,16 @@ GrOpsRenderPass* GrMtlGpu::onGetOpsRenderPass(
     // framebuffer to use.
     GrMtlRenderTarget* mtlRT = static_cast<GrMtlRenderTarget*>(renderTarget);
 
+    // TODO: support DMSAA
     SkASSERT(!useMSAASurface ||
              (renderTarget->numSamples() > 1));
 
-    // TODO: Make use of discardable MSAA
     bool withResolve = false;
 
-    // Figure out if we can use a Resolve store for this render pass
-    if (useMSAASurface && mtlRT->resolveAttachment() &&
-        this->mtlCaps().storeAndMultisampleResolveSupport()) {
+    // Figure out if we can use a Resolve store action for this render pass. When we set up
+    // the render pass we'll update the color load/store ops since we don't want to ever load
+    // or store the msaa color attachment, but may need to for the resolve attachment.
+    if (useMSAASurface && this->mtlCaps().renderTargetSupportsDiscardableMSAA(mtlRT)) {
         withResolve = true;
     }
 
@@ -165,6 +176,9 @@ GrOpsRenderPass* GrMtlGpu::onGetOpsRenderPass(
 
 GrMtlCommandBuffer* GrMtlGpu::commandBuffer() {
     if (!fCurrentCmdBuffer) {
+#if GR_METAL_CAPTURE_COMMANDBUFFER
+        this->testingOnly_startCapture();
+#endif
         // Create a new command buffer for the next submit
         fCurrentCmdBuffer = GrMtlCommandBuffer::Make(fQueue);
     }
@@ -215,6 +229,9 @@ bool GrMtlGpu::submitCommandBuffer(SyncQueue sync) {
     // command buffer in commandBuffer(), above.
     this->checkForFinishedCommandBuffers();
 
+#if GR_METAL_CAPTURE_COMMANDBUFFER
+    this->testingOnly_endCapture();
+#endif
     return true;
 }
 
@@ -1179,13 +1196,16 @@ void GrMtlGpu::copySurfaceAsResolve(GrSurface* dst, GrSurface* src) {
     this->resolve(dstAttachment, srcRT->colorAttachment());
 }
 
-void GrMtlGpu::copySurfaceAsBlit(GrSurface* dst, GrSurface* src, const SkIRect& srcRect,
-                                 const SkIPoint& dstPoint) {
+void GrMtlGpu::copySurfaceAsBlit(GrSurface* dst, GrSurface* src,
+                                 GrMtlAttachment* dstAttachment, GrMtlAttachment* srcAttachment,
+                                 const SkIRect& srcRect, const SkIPoint& dstPoint) {
 #ifdef SK_DEBUG
-    SkASSERT(this->mtlCaps().canCopyAsBlit(dst, src, srcRect, dstPoint));
+    SkASSERT(this->mtlCaps().canCopyAsBlit(dstAttachment->mtlFormat(), dstAttachment->numSamples(),
+                                           srcAttachment->mtlFormat(), dstAttachment->numSamples(),
+                                           srcRect, dstPoint, dst == src));
 #endif
-    id<MTLTexture> GR_NORETAIN dstTex = GrGetMTLTextureFromSurface(dst);
-    id<MTLTexture> GR_NORETAIN srcTex = GrGetMTLTextureFromSurface(src);
+    id<MTLTexture> GR_NORETAIN dstTex = dstAttachment->mtlTexture();
+    id<MTLTexture> GR_NORETAIN srcTex = srcAttachment->mtlTexture();
 
     auto cmdBuffer = this->commandBuffer();
     id<MTLBlitCommandEncoder> GR_NORETAIN blitCmdEncoder = cmdBuffer->getBlitCommandEncoder();
@@ -1212,21 +1232,70 @@ bool GrMtlGpu::onCopySurface(GrSurface* dst, GrSurface* src, const SkIRect& srcR
                              const SkIPoint& dstPoint) {
     SkASSERT(!src->isProtected() && !dst->isProtected());
 
-    bool success = false;
-    if (this->mtlCaps().canCopyAsBlit(dst, src, srcRect, dstPoint)) {
-       this->copySurfaceAsBlit(dst, src, srcRect, dstPoint);
-       success = true;
-    } else if (this->mtlCaps().canCopyAsResolve(dst, src, srcRect, dstPoint)) {
+    GrMtlAttachment* dstAttachment;
+    GrMtlAttachment* srcAttachment;
+    GrRenderTarget* dstRT = dst->asRenderTarget();
+    if (dstRT) {
+        GrMtlRenderTarget* mtlRT = static_cast<GrMtlRenderTarget*>(dstRT);
+        // This will technically return true for single sample rts that used DMSAA in which case we
+        // don't have to pick the resolve attachment. But in that case the resolve and color
+        // attachments will be the same anyways.
+        if (this->mtlCaps().renderTargetSupportsDiscardableMSAA(mtlRT)) {
+            dstAttachment = mtlRT->resolveAttachment();
+        } else {
+            dstAttachment = mtlRT->colorAttachment();
+        }
+    } else if (dst->asTexture()) {
+        dstAttachment = static_cast<GrMtlTexture*>(dst->asTexture())->attachment();
+    } else {
+        // The surface in a GrAttachment already
+        dstAttachment = static_cast<GrMtlAttachment*>(dst);
+    }
+    GrRenderTarget* srcRT = src->asRenderTarget();
+    if (srcRT) {
+        GrMtlRenderTarget* mtlRT = static_cast<GrMtlRenderTarget*>(srcRT);
+        // This will technically return true for single sample rts that used DMSAA in which case we
+        // don't have to pick the resolve attachment. But in that case the resolve and color
+        // attachments will be the same anyways.
+        if (this->mtlCaps().renderTargetSupportsDiscardableMSAA(mtlRT)) {
+            srcAttachment = mtlRT->resolveAttachment();
+        } else {
+            srcAttachment = mtlRT->colorAttachment();
+        }
+    } else if (src->asTexture()) {
+        SkASSERT(src->asTexture());
+        srcAttachment = static_cast<GrMtlTexture*>(src->asTexture())->attachment();
+    } else {
+        // The surface in a GrAttachment already
+        srcAttachment = static_cast<GrMtlAttachment*>(src);
+    }
+
+    MTLPixelFormat dstFormat = dstAttachment->mtlFormat();
+    MTLPixelFormat srcFormat = srcAttachment->mtlFormat();
+
+    int dstSampleCnt = dstAttachment->sampleCount();
+    int srcSampleCnt = srcAttachment->sampleCount();
+
+    if (this->mtlCaps().canCopyAsResolve(dstFormat, dstSampleCnt,
+                                         srcFormat, srcSampleCnt,
+                                         SkToBool(srcRT), src->dimensions(),
+                                         srcRect, dstPoint,
+                                         dstAttachment == srcAttachment)) {
         this->copySurfaceAsResolve(dst, src);
-        success = true;
+        return true;
     }
-    if (success) {
-        SkIRect dstRect = SkIRect::MakeXYWH(dstPoint.x(), dstPoint.y(),
-                                            srcRect.width(), srcRect.height());
-        // The rect is already in device space so we pass in kTopLeft so no flip is done.
-        this->didWriteToSurface(dst, kTopLeft_GrSurfaceOrigin, &dstRect);
+
+    if (srcAttachment->framebufferOnly() || dstAttachment->framebufferOnly()) {
+        return false;
     }
-    return success;
+
+    if (this->mtlCaps().canCopyAsBlit(dstFormat, dstSampleCnt, srcFormat, srcSampleCnt,
+                                      srcRect, dstPoint, dstAttachment == srcAttachment)) {
+        this->copySurfaceAsBlit(dst, src, dstAttachment, srcAttachment, srcRect, dstPoint);
+        return true;
+    }
+
+    return false;
 }
 
 bool GrMtlGpu::onWritePixels(GrSurface* surface,
@@ -1504,7 +1573,7 @@ void GrMtlGpu::onResolveRenderTarget(GrRenderTarget* target, const SkIRect&) {
     SkASSERT(target->numSamples() > 1);
     GrMtlRenderTarget* rt = static_cast<GrMtlRenderTarget*>(target);
 
-    if (rt->resolveAttachment() && this->mtlCaps().storeAndMultisampleResolveSupport()) {
+    if (rt->resolveAttachment() && this->mtlCaps().renderTargetSupportsDiscardableMSAA(rt)) {
         // We would have resolved the RT during the render pass.
         return;
     }
@@ -1530,20 +1599,22 @@ void GrMtlGpu::resolve(GrMtlAttachment* resolveAttachment,
     this->commandBuffer()->addGrSurface(sk_ref_sp<const GrSurface>(msaaAttachment));
 }
 
-bool GrMtlGpu::loadMSAAFromResolve(GrAttachment* dst,
-                                   GrMtlAttachment* src,
-                                   const SkIRect& srcRect) {
+GrMtlRenderCommandEncoder* GrMtlGpu::loadMSAAFromResolve(
+        GrAttachment* dst, GrMtlAttachment* src, const SkIRect& srcRect,
+        MTLRenderPassStencilAttachmentDescriptor* stencil) {
     if (!dst) {
-        return false;
+        return nil;
     }
     if (!src || src->framebufferOnly()) {
-        return false;
+        return nil;
     }
 
     GrMtlAttachment* mtlDst = static_cast<GrMtlAttachment*>(dst);
 
+    MTLPixelFormat stencilFormat = stencil.texture.pixelFormat;
     auto renderPipeline = this->resourceProvider().findOrCreateMSAALoadPipeline(mtlDst->mtlFormat(),
-                                                                                dst->numSamples());
+                                                                                dst->numSamples(),
+                                                                                stencilFormat);
 
     // Set up rendercommandencoder
     auto renderPassDesc = [MTLRenderPassDescriptor new];
@@ -1553,8 +1624,13 @@ bool GrMtlGpu::loadMSAAFromResolve(GrAttachment* dst,
     colorAttachment.storeAction = MTLStoreActionMultisampleResolve;
     colorAttachment.resolveTexture = src->mtlTexture();
 
+    renderPassDesc.stencilAttachment = stencil;
+
+    // We know in this case that the preceding renderCommandEncoder will not be compatible.
+    // Either it's using a different rendertarget, or we are reading from the resolve and
+    // hence we need to let the previous resolve finish. So we create a new one without checking.
     auto renderCmdEncoder =
-                this->commandBuffer()->getRenderCommandEncoder(renderPassDesc, nullptr, nullptr);
+                this->commandBuffer()->getRenderCommandEncoder(renderPassDesc, nullptr);
 
     // Bind pipeline
     renderCmdEncoder->setRenderPipelineState(renderPipeline->mtlPipelineState());
@@ -1599,9 +1675,9 @@ bool GrMtlGpu::loadMSAAFromResolve(GrAttachment* dst,
         renderCmdEncoder->setVertexBuffer(buffer->mtlBuffer(), slice.fOffset, 0);
     }
 
-    renderCmdEncoder->drawPrimitives(MTLPrimitiveTypeTriangleStrip, 0, 4, 1, 0);
+    renderCmdEncoder->drawPrimitives(MTLPrimitiveTypeTriangleStrip, (NSUInteger)0, (NSUInteger)4);
 
-    return true;
+    return renderCmdEncoder;
 }
 
 #if GR_TEST_UTILS
@@ -1609,14 +1685,30 @@ void GrMtlGpu::testingOnly_startCapture() {
     if (@available(macOS 10.13, iOS 11.0, *)) {
         // TODO: add Metal 3 interface as well
         MTLCaptureManager* captureManager = [MTLCaptureManager sharedCaptureManager];
-        [captureManager startCaptureWithDevice: fDevice];
-    }
+        if (captureManager.isCapturing) {
+            return;
+        }
+        if (@available(macOS 10.15, iOS 13.0, *)) {
+            MTLCaptureDescriptor* captureDescriptor = [[MTLCaptureDescriptor alloc] init];
+            captureDescriptor.captureObject = fQueue;
+
+            NSError *error;
+            if (![captureManager startCaptureWithDescriptor: captureDescriptor error:&error])
+            {
+                NSLog(@"Failed to start capture, error %@", error);
+            }
+        } else {
+            [captureManager startCaptureWithCommandQueue: fQueue];
+        }
+     }
 }
 
 void GrMtlGpu::testingOnly_endCapture() {
     if (@available(macOS 10.13, iOS 11.0, *)) {
         MTLCaptureManager* captureManager = [MTLCaptureManager sharedCaptureManager];
-        [captureManager stopCapture];
+        if (captureManager.isCapturing) {
+            [captureManager stopCapture];
+        }
     }
 }
 #endif

@@ -26,7 +26,8 @@
 #include "tools/Resources.h"
 #include "tools/ToolUtils.h"
 
-static const SkRect kRect = SkRect::MakeWH(1, 1);
+static constexpr int kWidth = 2;
+static constexpr int kHeight = 2;
 
 template <typename T>
 static void set_uniform(SkRuntimeShaderBuilder* builder, const char* name, const T& value) {
@@ -82,17 +83,43 @@ static void test_one_permutation(skiatest::Reporter* r,
 
     SkPaint paintShader;
     paintShader.setShader(shader);
-    surface->getCanvas()->drawRect(kRect, paintShader);
+    surface->getCanvas()->drawRect(SkRect::MakeWH(kWidth, kHeight), paintShader);
 
     SkBitmap bitmap;
     REPORTER_ASSERT(r, bitmap.tryAllocPixels(surface->imageInfo()));
     REPORTER_ASSERT(r, surface->readPixels(bitmap.info(), bitmap.getPixels(), bitmap.rowBytes(),
                                            /*srcX=*/0, /*srcY=*/0));
 
-    SkColor color = bitmap.getColor(0, 0);
-    REPORTER_ASSERT(r, color == SkColorSetARGB(0xFF, 0x00, 0xFF, 0x00),
-                    "Expected: solid green. Actual: A=%02X R=%02X G=%02X B=%02X.",
-                    SkColorGetA(color), SkColorGetR(color), SkColorGetG(color), SkColorGetB(color));
+    bool success = true;
+    SkColor color[kHeight][kWidth];
+    for (int y = 0; y < kHeight; ++y) {
+        for (int x = 0; x < kWidth; ++x) {
+            color[y][x] = bitmap.getColor(x, y);
+            if (color[y][x] != SkColorSetARGB(0xFF, 0x00, 0xFF, 0x00)) {
+                success = false;
+            }
+        }
+    }
+
+    if (!success) {
+        static_assert(kWidth  == 2);
+        static_assert(kHeight == 2);
+        ERRORF(r, "Expected: solid green. Actual:\n"
+                  "RRGGBBAA RRGGBBAA\n"
+                  "%02X%02X%02X%02X %02X%02X%02X%02X\n"
+                  "%02X%02X%02X%02X %02X%02X%02X%02X",
+                  SkColorGetR(color[0][0]), SkColorGetG(color[0][0]),
+                  SkColorGetB(color[0][0]), SkColorGetA(color[0][0]),
+
+                  SkColorGetR(color[0][1]), SkColorGetG(color[0][1]),
+                  SkColorGetB(color[0][1]), SkColorGetA(color[0][1]),
+
+                  SkColorGetR(color[1][0]), SkColorGetG(color[1][0]),
+                  SkColorGetB(color[1][0]), SkColorGetA(color[1][0]),
+
+                  SkColorGetR(color[1][1]), SkColorGetG(color[1][1]),
+                  SkColorGetB(color[1][1]), SkColorGetA(color[1][1]));
+    }
 }
 
 static void test_permutations(skiatest::Reporter* r,
@@ -109,14 +136,14 @@ static void test_permutations(skiatest::Reporter* r,
 }
 
 static void test_cpu(skiatest::Reporter* r, const char* testFile) {
-    const SkImageInfo info = SkImageInfo::MakeN32Premul(kRect.width(), kRect.height());
+    const SkImageInfo info = SkImageInfo::MakeN32Premul(kWidth, kHeight);
     sk_sp<SkSurface> surface(SkSurface::MakeRaster(info));
 
     test_permutations(r, surface.get(), testFile, /*worksInES2=*/true);
 }
 
 static void test_gpu(skiatest::Reporter* r, GrDirectContext* ctx, const char* testFile) {
-    const SkImageInfo info = SkImageInfo::MakeN32Premul(kRect.width(), kRect.height());
+    const SkImageInfo info = SkImageInfo::MakeN32Premul(kWidth, kHeight);
     sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(ctx, SkBudgeted::kNo, info));
 
     test_permutations(r, surface.get(), testFile, /*worksInES2=*/true);
@@ -127,7 +154,7 @@ static void test_es3(skiatest::Reporter* r, GrDirectContext* ctx, const char* te
         return;
     }
     // ES3-only tests never run on the CPU, because SkVM lacks support for many non-ES2 features.
-    const SkImageInfo info = SkImageInfo::MakeN32Premul(kRect.width(), kRect.height());
+    const SkImageInfo info = SkImageInfo::MakeN32Premul(kWidth, kHeight);
     sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(ctx, SkBudgeted::kNo, info));
 
     test_permutations(r, surface.get(), testFile, /*worksInES2=*/false);
@@ -213,14 +240,21 @@ SKSL_TEST_ES3(SkSLIntrinsicDFdx,               "intrinsics/DFdx.sksl")
 SKSL_TEST_ES3(SkSLIntrinsicDFdy,               "intrinsics/DFdy.sksl")
 SKSL_TEST_ES3(SkSLIntrinsicFloatBitsToInt,     "intrinsics/FloatBitsToInt.sksl")
 SKSL_TEST_ES3(SkSLIntrinsicFloatBitsToUint,    "intrinsics/FloatBitsToUint.sksl")
+SKSL_TEST_ES3(SkSLIntrinsicFwidth,             "intrinsics/Fwidth.sksl")
 SKSL_TEST_ES3(SkSLIntrinsicIntBitsToFloat,     "intrinsics/IntBitsToFloat.sksl")
 SKSL_TEST_ES3(SkSLIntrinsicIsInf,              "intrinsics/IsInf.sksl")
-// TODO(johnstiles): test broken on Adreno 6xx + Vulkan
-//SKSL_TEST(SkSLIntrinsicClampFloat,             "intrinsics/ClampFloat.sksl")
+// Fails on Adreno 6xx + Vulkan
+SKSL_TEST_CPU(SkSLIntrinsicClampFloat,         "intrinsics/ClampFloat.sksl")
+SKSL_TEST(SkSLIntrinsicMatrixCompMultES2,      "intrinsics/MatrixCompMultES2.sksl")
+SKSL_TEST_ES3(SkSLIntrinsicMatrixCompMultES3,  "intrinsics/MatrixCompMultES3.sksl")
 SKSL_TEST(SkSLIntrinsicMaxFloat,               "intrinsics/MaxFloat.sksl")
 SKSL_TEST(SkSLIntrinsicMinFloat,               "intrinsics/MinFloat.sksl")
-// skbug.com/11919: Fails on Adreno + Vulkan
+// Fails on Adreno + Vulkan (skia:11919)
 SKSL_TEST_CPU(SkSLIntrinsicMixFloat,           "intrinsics/MixFloat.sksl")
+SKSL_TEST_ES3(SkSLIntrinsicModf,               "intrinsics/Modf.sksl")
+SKSL_TEST_ES3(SkSLIntrinsicOuterProduct,       "intrinsics/OuterProduct.sksl")
+// Fails on Mac OpenGL + Radeon 5300M (skia:12434)
+//SKSL_TEST_ES3(SkSLIntrinsicPackUnorm2x16,      "intrinsics/PackUnorm2x16.sksl")
 SKSL_TEST_ES3(SkSLIntrinsicRound,              "intrinsics/Round.sksl")
 SKSL_TEST_ES3(SkSLIntrinsicRoundEven,          "intrinsics/RoundEven.sksl")
 SKSL_TEST(SkSLIntrinsicSignFloat,              "intrinsics/SignFloat.sksl")
@@ -230,6 +264,8 @@ SKSL_TEST_ES3(SkSLIntrinsicTranspose,          "intrinsics/Transpose.sksl")
 SKSL_TEST_ES3(SkSLIntrinsicUintBitsToFloat,    "intrinsics/UintBitsToFloat.sksl")
 
 SKSL_TEST_ES3(SkSLArrayNarrowingConversions,   "runtime/ArrayNarrowingConversions.rts")
+SKSL_TEST_ES3(SkSLLoopFloat,                   "runtime/LoopFloat.rts")
+SKSL_TEST_ES3(SkSLLoopInt,                     "runtime/LoopInt.rts")
 
 SKSL_TEST_ES3(SkSLArrayComparison,             "shared/ArrayComparison.sksl")
 SKSL_TEST_ES3(SkSLArrayConstructors,           "shared/ArrayConstructors.sksl")

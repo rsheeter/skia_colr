@@ -5,12 +5,14 @@
  * found in the LICENSE file.
  */
 
+#include "src/sksl/ir/SkSLTernaryExpression.h"
+
+#include "include/sksl/SkSLErrorReporter.h"
 #include "src/sksl/SkSLConstantFolder.h"
 #include "src/sksl/SkSLContext.h"
 #include "src/sksl/SkSLOperators.h"
 #include "src/sksl/SkSLProgramSettings.h"
-#include "src/sksl/ir/SkSLBoolLiteral.h"
-#include "src/sksl/ir/SkSLTernaryExpression.h"
+#include "src/sksl/ir/SkSLLiteral.h"
 
 namespace SkSL {
 
@@ -66,9 +68,9 @@ std::unique_ptr<Expression> TernaryExpression::Make(const Context& context,
 
     if (context.fConfig->fSettings.fOptimize) {
         const Expression* testExpr = ConstantFolder::GetConstantValueForVariable(*test);
-        if (testExpr->is<BoolLiteral>()) {
+        if (testExpr->isBoolLiteral()) {
             // static boolean test, just return one of the branches
-            return testExpr->as<BoolLiteral>().value() ? std::move(ifTrue)
+            return testExpr->as<Literal>().boolValue() ? std::move(ifTrue)
                                                        : std::move(ifFalse);
         }
     }

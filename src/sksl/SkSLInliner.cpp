@@ -14,7 +14,6 @@
 #include "include/private/SkSLLayout.h"
 #include "src/sksl/SkSLAnalysis.h"
 #include "src/sksl/ir/SkSLBinaryExpression.h"
-#include "src/sksl/ir/SkSLBoolLiteral.h"
 #include "src/sksl/ir/SkSLBreakStatement.h"
 #include "src/sksl/ir/SkSLChildCall.h"
 #include "src/sksl/ir/SkSLConstructor.h"
@@ -35,7 +34,6 @@
 #include "src/sksl/ir/SkSLExternalFunctionReference.h"
 #include "src/sksl/ir/SkSLField.h"
 #include "src/sksl/ir/SkSLFieldAccess.h"
-#include "src/sksl/ir/SkSLFloatLiteral.h"
 #include "src/sksl/ir/SkSLForStatement.h"
 #include "src/sksl/ir/SkSLFunctionCall.h"
 #include "src/sksl/ir/SkSLFunctionDeclaration.h"
@@ -44,8 +42,8 @@
 #include "src/sksl/ir/SkSLIfStatement.h"
 #include "src/sksl/ir/SkSLIndexExpression.h"
 #include "src/sksl/ir/SkSLInlineMarker.h"
-#include "src/sksl/ir/SkSLIntLiteral.h"
 #include "src/sksl/ir/SkSLInterfaceBlock.h"
+#include "src/sksl/ir/SkSLLiteral.h"
 #include "src/sksl/ir/SkSLNop.h"
 #include "src/sksl/ir/SkSLPostfixExpression.h"
 #include "src/sksl/ir/SkSLPrefixExpression.h"
@@ -277,7 +275,7 @@ void Inliner::ensureScopedBlocks(Statement* inlinedBody, Statement* parentStmt) 
 }
 
 void Inliner::reset() {
-    fMangler.reset();
+    fContext->fMangler->reset();
     fInlinedStatementCounter = 0;
 }
 
@@ -308,9 +306,7 @@ std::unique_ptr<Expression> Inliner::inlineExpression(int offset,
                                           binaryExpr.getOperator(),
                                           expr(binaryExpr.right()));
         }
-        case Expression::Kind::kBoolLiteral:
-        case Expression::Kind::kIntLiteral:
-        case Expression::Kind::kFloatLiteral:
+        case Expression::Kind::kLiteral:
             return expression.clone();
         case Expression::Kind::kChildCall: {
             const ChildCall& childCall = expression.as<ChildCall>();
@@ -399,6 +395,8 @@ std::unique_ptr<Expression> Inliner::inlineExpression(int offset,
             const IndexExpression& idx = expression.as<IndexExpression>();
             return IndexExpression::Make(*fContext, expr(idx.base()), expr(idx.index()));
         }
+        case Expression::Kind::kMethodReference:
+            return expression.clone();
         case Expression::Kind::kPrefix: {
             const PrefixExpression& p = expression.as<PrefixExpression>();
             return PrefixExpression::Make(*fContext, p.getOperator(), expr(p.operand()));
@@ -558,7 +556,7 @@ std::unique_ptr<Statement> Inliner::inlineStatement(int offset,
             // regard, but see `InlinerAvoidsVariableNameOverlap` for a counterexample where unique
             // names are important.
             const String* name = symbolTableForStatement->takeOwnershipOfString(
-                    fMangler.uniqueName(String(variable.name()), symbolTableForStatement));
+                    fContext->fMangler->uniqueName(variable.name(), symbolTableForStatement));
             auto clonedVar = std::make_unique<Variable>(
                                                      offset,
                                                      &variable.modifiers(),
@@ -581,52 +579,12 @@ std::unique_ptr<Statement> Inliner::inlineStatement(int offset,
     }
 }
 
-Inliner::InlineVariable Inliner::makeInlineVariable(const String& baseName,
-                                                    const Type* type,
-                                                    SymbolTable* symbolTable,
-                                                    Modifiers modifiers,
-                                                    bool isBuiltinCode,
-                                                    std::unique_ptr<Expression>* initialValue) {
-    // $floatLiteral or $intLiteral aren't real types that we can use for scratch variables, so
-    // replace them if they ever appear here. If this happens, we likely forgot to coerce a type
-    // somewhere during compilation.
-    if (type->isLiteral()) {
-        SkDEBUGFAIL("found a $literal type while inlining");
-        type = &type->scalarTypeForLiteral();
-    }
-
-    // Out parameters aren't supported.
-    SkASSERT(!(modifiers.fFlags & Modifiers::kOut_Flag));
-
-    // Provide our new variable with a unique name, and add it to our symbol table.
-    const String* name =
-            symbolTable->takeOwnershipOfString(fMangler.uniqueName(baseName, symbolTable));
-
-    // Create our new variable and add it to the symbol table.
-    InlineVariable result;
-    auto var = std::make_unique<Variable>(/*offset=*/-1,
-                                          this->modifiersPool().add(Modifiers{}),
-                                          name->c_str(),
-                                          type,
-                                          isBuiltinCode,
-                                          Variable::Storage::kLocal);
-    // If we are creating an array type, reduce it to base type plus array-size.
-    int arraySize = 0;
-    if (type->isArray()) {
-        arraySize = type->columns();
-        type = &type->componentType();
-    }
-    // Create our variable declaration.
-    result.fVarDecl = VarDeclaration::Make(*fContext, var.get(), type, arraySize,
-                                           std::move(*initialValue));
-    result.fVarSymbol = symbolTable->add(std::move(var));
-    return result;
-}
-
 Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
                                          std::shared_ptr<SymbolTable> symbolTable,
                                          const ProgramUsage& usage,
                                          const FunctionDeclaration* caller) {
+    using ScratchVariable = Variable::ScratchVariable;
+
     // Inlining is more complicated here than in a typical compiler, because we have to have a
     // high-level IR and can't just drop statements into the middle of an expression or even use
     // gotos.
@@ -661,11 +619,12 @@ Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
         // Create a variable to hold the result in the extra statements. We don't need to do this
         // for void-return functions, or in cases that are simple enough that we can just replace
         // the function-call node with the result expression.
-        std::unique_ptr<Expression> noInitialValue;
-        InlineVariable var = this->makeInlineVariable(String(function.declaration().name()),
-                                                      &function.declaration().returnType(),
-                                                      symbolTable.get(), Modifiers{},
-                                                      caller->isBuiltin(), &noInitialValue);
+        ScratchVariable var = Variable::MakeScratchVariable(*fContext,
+                                                            function.declaration().name(),
+                                                            &function.declaration().returnType(),
+                                                            Modifiers{},
+                                                            symbolTable.get(),
+                                                            /*initialValue=*/nullptr);
         inlineStatements.push_back(std::move(var.fVarDecl));
         resultExpr = VariableReference::Make(/*offset=*/-1, var.fVarSymbol);
     }
@@ -675,21 +634,25 @@ Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
     VariableRewriteMap varMap;
     for (int i = 0; i < arguments.count(); ++i) {
         // If the parameter isn't written to within the inline function ...
+        Expression* arg = arguments[i].get();
         const Variable* param = function.declaration().parameters()[i];
         const ProgramUsage::VariableCounts& paramUsage = usage.get(*param);
         if (!paramUsage.fWrite) {
             // ... and can be inlined trivially (e.g. a swizzle, or a constant array index),
             // or any expression without side effects that is only accessed at most once...
-            if ((paramUsage.fRead > 1) ? Analysis::IsTrivialExpression(*arguments[i])
-                                       : !arguments[i]->hasSideEffects()) {
+            if ((paramUsage.fRead > 1) ? Analysis::IsTrivialExpression(*arg)
+                                       : !arg->hasSideEffects()) {
                 // ... we don't need to copy it at all! We can just use the existing expression.
-                varMap[param] = arguments[i]->clone();
+                varMap[param] = arg->clone();
                 continue;
             }
         }
-        InlineVariable var = this->makeInlineVariable(String(param->name()), &arguments[i]->type(),
-                                                      symbolTable.get(), param->modifiers(),
-                                                      caller->isBuiltin(), &arguments[i]);
+        ScratchVariable var = Variable::MakeScratchVariable(*fContext,
+                                                            param->name(),
+                                                            &arg->type(),
+                                                            param->modifiers(),
+                                                            symbolTable.get(),
+                                                            std::move(arguments[i]));
         inlineStatements.push_back(std::move(var.fVarDecl));
         varMap[param] = VariableReference::Make(/*offset=*/-1, var.fVarSymbol);
     }
@@ -714,7 +677,7 @@ Inliner::InlinedCall Inliner::inlineCall(FunctionCall* call,
     } else if (function.declaration().returnType().isVoid()) {
         // It's a void function, so it doesn't actually result in anything, but we have to return
         // something non-null as a standin.
-        inlinedCall.fReplacementExpr = BoolLiteral::Make(*fContext, offset, /*value=*/false);
+        inlinedCall.fReplacementExpr = Literal::MakeBool(*fContext, offset, /*value=*/false);
     } else {
         // It's a non-void function, but it never created a result expression--that is, it never
         // returned anything on any path! This should have been detected in the function finalizer.
@@ -942,12 +905,11 @@ public:
         }
 
         switch ((*expr)->kind()) {
-            case Expression::Kind::kBoolLiteral:
             case Expression::Kind::kExternalFunctionReference:
             case Expression::Kind::kFieldAccess:
-            case Expression::Kind::kFloatLiteral:
             case Expression::Kind::kFunctionReference:
-            case Expression::Kind::kIntLiteral:
+            case Expression::Kind::kLiteral:
+            case Expression::Kind::kMethodReference:
             case Expression::Kind::kSetting:
             case Expression::Kind::kTypeReference:
             case Expression::Kind::kVariableReference:
