@@ -4,6 +4,10 @@ See full details, and build instructions, at https://skia.org.
 
 This repo is meant to house COLR test utils. To try on Mac or Linux:
 
+  # Once in a while
+  ./tools/git-sync-deps
+  
+  # Every change
   ./build_colr.sh
   ./out/Static/colr_test
 
