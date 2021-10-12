@@ -1,16 +1,6 @@
 #!/bin/bash -x
 
-function fetch_drott_colr() {
-	pushd third_party/externals/freetype
-	git remote add drott_ft_colr https://github.com/drott/freetype2-colr
-	git fetch drott_ft_colr
-	git checkout -b colr_v1_dag drott_ft_colr/colrV1APIGraph
-	popd
-}
-
-[ -e ./bin/gn ] || ./bin/fetch-gn
-[ -d third_party/externals ] || ./tools/git-sync-deps
-# [ "colr_v1_dag" == "$(cd third_party/externals/freetype && git rev-parse --abbrev-ref HEAD)" ] || fetch_drott_colr
+./tools/git-sync-deps
 [ -d out/Static ] || mkdir -p out/Static
 
 set -e
